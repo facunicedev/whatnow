@@ -54,6 +54,29 @@ async function registerCommand($: EngineInterface) {
   await $.command.register({ name: P, description: t(s, 'cmdDescription'), argumentHint: t(s, 'cmdHint') })
 }
 
+// Rewrites PROGRESS.md in the chosen language with one direct model call (no conversation turn).
+// ponytail: haiku, one shot; the file is only written if the checkbox lines survive intact.
+async function translateProgress($: EngineInterface, code: string, s: Dict) {
+  const md = await $.fs.read(at(PROGRESS)).catch(() => '')
+  if (typeof md !== 'string' || !md.trim()) return
+  const boxes = (x: string) => (x.match(/^\s*- \[[ xX]\] /gm) ?? []).length
+  let name = code
+  try { name = new Intl.DisplayNames(['en'], { type: 'language' }).of(code) ?? code } catch { /* keep the code */ }
+  $.ui.toast(t(s, 'translating', { lang: name }))
+  const r = await $.model.complete({
+    model: 'haiku',
+    effort: 'low',
+    maxTokens: 4000,
+    timeoutMs: 60_000,
+    prompt: `Translate this Markdown file into ${name}. Keep the structure exactly: heading levels, every "- [ ]" and "- [x]" line, blank lines, code, file names and paths. The heading that means "this session" must read exactly "${s.sessionHeading}" and the line label that means "status" must read exactly "${s.statusLabel}". Reply with the translated file only, no comments, no code fence.\n\n${md}`,
+  })
+  const out = r.isAnswered ? r.text.replace(/^```\w*\n|\n```\s*$/g, '').trim() : ''
+  if (!out || boxes(out) !== boxes(md)) return void $.ui.toast(t(s, 'translateFail'))
+  await $.fs.write(at(PROGRESS), out + '\n')
+  await update($, progress, () => out)
+  $.ui.toast(t(s, 'translated'))
+}
+
 const handoffPrompt = (s: Dict, why: string) => t(s, 'handoffPrompt', { why, handoff: at(HANDOFF), progress: at(PROGRESS) })
 const openPane = ($: EngineInterface, s: Dict) => $.ui.open({ id: P, title: t(s, 'paneTitle') })
 
@@ -163,6 +186,7 @@ export const register: Register = on => {
       await $.store.set('lang', pick)
       await registerCommand($)
       const s2 = await read($, strings)
+      void translateProgress($, code, s2).catch(err => $.ui.toast(t(s2, 'translateFail') + ' ' + String(err)))
       return { text: t(s2, 'langSet', { lang: pick === 'auto' ? `auto (${code})` : code }) + (found || code === 'en' ? '' : ' ' + t(s2, 'langMissing', { lang: code })) }
     }
     return { text: t(s, 'help', { L: L / 1000 }) }

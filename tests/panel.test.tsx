@@ -149,3 +149,31 @@ test('/whatnow language cambia el idioma de la banda y se guarda; auto lo toma d
   expect(r2.text).toContain('Language: en')
   expect(stored.lang).toBe('en')
 })
+
+test('al cambiar de idioma PROGRESS.md se traduce con una llamada al modelo; si se pierden casillas no se escribe', async ($, on) => {
+  const written: string[] = []
+  let reply = ''
+  on('command.register', () => ({ value: { command: 'whatnow' } }))
+  on('fs.read', readFile)
+  on('fs.write', (_, e: any) => (written.push(e.content ?? e.text ?? e.data), { value: undefined }) as never)
+  on('settings.read', () => LANG('es'))
+  on('fs.list', () => ({ value: [{ name: 'en.json' }, { name: 'es.json' }] }) as never)
+  on('model.complete', () => ({ value: { isAnswered: true, text: reply, usage: {} } }) as never)
+  on('ui.toast', () => ({ value: undefined }) as never)
+  on('store.get', () => ({ value: undefined }) as never)
+  on('store.set', () => ({ value: undefined }) as never)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const wait = () => new Promise(r => setTimeout(r, 50))
+
+  reply = MD.replace('Estado:', 'Status:').replace('## Esta sesión', '## This session')
+  await $.command.run({ command: 'whatnow', args: 'en' } as never)
+  await wait()
+  expect(written.join('')).toContain('## This session')
+
+  written.length = 0
+  reply = '# only a title'
+  await $.command.run({ command: 'whatnow', args: 'es' } as never)
+  await wait()
+  expect(written.length).toBe(0)
+})
