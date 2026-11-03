@@ -149,18 +149,21 @@ export const register: Register = on => {
       void $.prompt.submit({ text: handoffPrompt(s, t(s, 'whyUser')), asUser: true }).catch(err => $.ui.toast(t(s, 'handoffFail', { err: String(err) })))
       return { text: t(s, 'handoffAsk') }
     }
-    if (/^(lang|idiom)/.test(word)) {
-      const files = await $.fs.list(`${$.plugin.root}/lang`).catch(() => [])
-      const list = files.map(f => f.name.replace(/\.json$/, '')).join(', ')
-      if (!value) {
+    const files = await $.fs.list(`${$.plugin.root}/lang`).catch(() => [])
+    const codes = files.map(f => f.name.replace(/\.json$/, ''))
+    const isLangWord = /^(lang|idiom)/.test(word)
+    // /whatnow en, /whatnow es, /whatnow auto (or any lang/<code>.json): the word itself is the language.
+    if (isLangWord || word === 'auto' || codes.includes(word)) {
+      const pick = isLangWord ? value : word
+      if (!pick) {
         const cur = ((await $.store.get('lang')) ?? 'auto') as string
-        return { text: t(s, 'langCurrent', { lang: cur, list }) }
+        return { text: t(s, 'langCurrent', { lang: cur, list: codes.join(', ') }) }
       }
-      const { code, found } = await loadLang($, value)
-      await $.store.set('lang', value)
+      const { code, found } = await loadLang($, pick)
+      await $.store.set('lang', pick)
       await registerCommand($)
       const s2 = await read($, strings)
-      return { text: t(s2, 'langSet', { lang: value === 'auto' ? `auto (${code})` : code }) + (found || code === 'en' ? '' : ' ' + t(s2, 'langMissing', { lang: code })) }
+      return { text: t(s2, 'langSet', { lang: pick === 'auto' ? `auto (${code})` : code }) + (found || code === 'en' ? '' : ' ' + t(s2, 'langMissing', { lang: code })) }
     }
     return { text: t(s, 'help', { L: L / 1000 }) }
   })

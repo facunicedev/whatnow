@@ -127,7 +127,7 @@ test('/whatnow language cambia el idioma de la banda y se guarda; auto lo toma d
   on('command.register', () => ({ value: { command: 'whatnow' } }))
   on('fs.read', readFile)
   on('settings.read', () => LANG('English'))
-  on('fs.list', () => ({ value: [] }) as never)
+  on('fs.list', () => ({ value: [{ name: 'en.json' }, { name: 'es.json' }] }) as never)
   on('store.get', (_, e: any) => ({ value: stored[e.key] }) as never)
   on('store.set', (_, e: any) => ((stored[e.key] = e.value), { value: undefined }) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -144,4 +144,8 @@ test('/whatnow language cambia el idioma de la banda y se guarda; auto lo toma d
   expect(r.text).toContain('Idioma: es')
   expect(stored.lang).toBe('es')
   expect(await texts()).toContain('Sesión')
+  // la palabra suelta es el idioma: /whatnow en
+  const r2 = await $.command.run({ command: 'whatnow', args: 'en' } as never)
+  expect(r2.text).toContain('Language: en')
+  expect(stored.lang).toBe('en')
 })
