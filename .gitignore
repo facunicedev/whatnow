@@ -1,0 +1,4 @@
+# personal working files (handoffs, progress notes of the author's own sessions)
+.claude/
+PROGRESS.md
+node_modules/

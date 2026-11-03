@@ -1,0 +1,6 @@
+{
+  "name": "whatnow",
+  "version": "0.2.0",
+  "description": "/whatnow: a panel with context use, session progress and project progress (from PROGRESS.md), plus automatic handoff before the context fills up. Languages: auto, es, en, or your own lang/<code>.json",
+  "types": "./types/index.d.ts"
+}
