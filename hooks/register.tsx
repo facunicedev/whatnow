@@ -111,6 +111,13 @@ ${answer.slice(0, 6000)}`,
   } catch { /* a failed sync just leaves the file as it was */ } finally { syncing = false }
 }
 
+// session.measure only fires when a window moves a whole point, so ask for the usage figures directly too.
+async function refreshLimits($: EngineInterface) {
+  try {
+    const u = await $.session.usage()
+    if (u.rateLimits?.length) await update($, limits, () => u.rateLimits)
+  } catch { /* no usage figures yet */ }
+}
 const handoffPrompt = (s: Dict, why: string) => t(s, 'handoffPrompt', { why, handoff: at(HANDOFF), progress: at(PROGRESS) })
 const openPane = ($: EngineInterface, s: Dict) => $.ui.open({ id: P, title: t(s, 'paneTitle') })
 
@@ -190,6 +197,7 @@ export const register: Register = on => {
       void openPane($, await read($, strings))
     }
     await refresh($)
+    await refreshLimits($)
     return next(e)
   })
 
@@ -288,6 +296,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     await refreshAgents($)
+    await refreshLimits($)
     if (!e.agentId) void syncProgress($, e.answer)
     return r
   })
