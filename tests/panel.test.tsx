@@ -205,7 +205,7 @@ test('el lateral muestra uso 5h/semana, la sesión principal con su tarea, las p
   expect(all).toContain('Arreglar el login')
   expect(all).toContain('25%') // paralela: 1 de 4
   expect(all).not.toContain('nota.txt') // solo carpetas
-  expect(all.indexOf('Uso 5 horas')).toBeLessThan(all.indexOf('SESIÓN PRINCIPAL'))
+  expect(all.indexOf('USO 5 HORAS')).toBeLessThan(all.indexOf('SESIÓN PRINCIPAL'))
   expect(all.indexOf('SESIÓN PARALELA')).toBeLessThan(all.indexOf('PROYECTO'))
   const colorOf = (txt: string) => (nodes.find(t => t.text.includes(txt)) as any)?.props?.color
   expect(colorOf('93%')).toBe('red') // contexto 140k/150k

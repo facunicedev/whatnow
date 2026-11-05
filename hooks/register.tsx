@@ -362,14 +362,16 @@ export const register: Register = on => {
       <>
         <Text> </Text>
         <Text dimColor>{'─'.repeat(w + 6)}</Text>
-        <Text bold color="cyan">{title.toUpperCase()}</Text>
+        <Text bold>{title.toUpperCase()}</Text>
       </>
     )
-    const usage = (name: string, r?: { percentUsed: number }) => (
-      <>
-        <Text bold>{name}</Text>
-        {r ? <Text color={fillColor(r.percentUsed)}>{bar(r.percentUsed, w)} {Math.round(r.percentUsed)}%</Text> : <Text dimColor>{t(s, 'noUsage')}</Text>}
-      </>
+    const cw = Math.max(10, Math.floor((e.props.bodyColumns - 2) / 3)) // column width
+    const bw = Math.max(4, cw - 6) // bar width inside a column
+    const col = (name: string, r?: { percentUsed: number }) => (
+      <Box flexDirection="column" width={cw}>
+        <Text bold wrap="truncate">{name.toUpperCase()}</Text>
+        {r ? <Text color={fillColor(r.percentUsed)} wrap="truncate">{bar(r.percentUsed, bw)} {Math.round(r.percentUsed)}%</Text> : <Text dimColor>{t(s, 'noUsage')}</Text>}
+      </Box>
     )
     // A session block: title, bar + %, one-sentence task, what is left.
     const block = (title: string, p: number | undefined, text: string, items: string[]) => (
@@ -384,13 +386,16 @@ export const register: Register = on => {
     )
     return (
       <Box flexDirection="column">
-        <Text bold color="cyan">{t(s, 'context').toUpperCase()}</Text>
-        <Text color={ctxColor}>{bar(ctx, w)} {ctx}%</Text>
-        <Text dimColor>{Math.round(used / 1000)}k / {L / 1000}k</Text>
-        {head(t(s, 'usage'))}
-        {usage(t(s, 'usage5h'), h5)}
-        <Text> </Text>
-        {usage(t(s, 'usage7d'), d7)}
+        {/* Three columns side by side: context, usage 5 h, usage week. */}
+        <Box>
+          <Box flexDirection="column" width={cw}>
+            <Text bold wrap="truncate">{t(s, 'context').toUpperCase()}</Text>
+            <Text color={ctxColor} wrap="truncate">{bar(ctx, bw)} {ctx}%</Text>
+            <Text dimColor wrap="truncate">{Math.round(used / 1000)}k / {L / 1000}k</Text>
+          </Box>
+          {col(t(s, 'usage5h'), h5)}
+          {col(t(s, 'usage7d'), d7)}
+        </Box>
         {md ? (
           <>
             {block(t(s, 'mainSession'), sesPct, task, sesTodo)}
