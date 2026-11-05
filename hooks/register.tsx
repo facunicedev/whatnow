@@ -94,7 +94,7 @@ async function syncProgress($: EngineInterface, answer: string) {
     const tasks = (x: string) => [...x.matchAll(/^\s*- \[[ xX]\] (.+)$/gm)].map(y => y[1].trim())
     const r = await $.model.complete({
       model: 'haiku', effort: 'low', maxTokens: 4000, timeoutMs: 60_000,
-      prompt: `Below is a PROGRESS.md and the assistant's last message of the work session. Update the file to match what the message says happened: tick "- [x]" the tasks that are now done, add new "- [ ]" tasks that the message says are still missing, and refresh the one-sentence task line of the session section. Never delete, reword or reorder existing task lines (only tick them), keep headings, labels, language and every other line exactly. If nothing changed, reply with the file unchanged. Reply with the file only, no comments, no code fence.
+      prompt: `Below is a PROGRESS.md and the assistant's last message of the work session. Update the file to match what the message says happened: tick "- [x]" the tasks that are now done, add new "- [ ]" tasks that the message says are still missing, and rewrite two lines so they are true now: the one-line project status (the line after the title, starting with its label) and the one-sentence task line of the session section. Never delete, reword or reorder existing task lines (only tick them), keep headings, labels, language and every other line exactly. If nothing changed, reply with the file unchanged. Reply with the file only, no comments, no code fence.
 
 --- PROGRESS.md ---
 ${md}
