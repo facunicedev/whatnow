@@ -112,7 +112,7 @@ test('/panel lateral pone el panel al lado, quita la banda y avisa si la ventana
 
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
-  expect(texts).toContain('· probar el traspaso\n· usarlo en un proyecto')
+  expect(texts).toContain('• Probar el traspaso\n• Usarlo en un proyecto')
   await pane.unmount()
 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' } as never)
@@ -199,14 +199,14 @@ test('el lateral muestra uso 5h/semana, la sesión principal con su tarea, las p
   const all = nodes.map(t => t.text).join('\n')
   expect(all).toContain('24%') // 23.5 redondeado
   expect(all).toContain('75%') // semana (y sesión principal)
-  expect(all).toContain('Sesión principal')
-  expect(all).toContain('probar el traspaso') // tarea de la sesión principal
-  expect(all).toContain('Sesión paralela: uno')
-  expect(all).toContain('arreglar el login')
+  expect(all).toContain('SESIÓN PRINCIPAL')
+  expect(all).toContain('Probar el traspaso') // tarea de la sesión principal
+  expect(all).toContain('SESIÓN PARALELA: UNO')
+  expect(all).toContain('Arreglar el login')
   expect(all).toContain('25%') // paralela: 1 de 4
   expect(all).not.toContain('nota.txt') // solo carpetas
-  expect(all.indexOf('Uso 5 horas')).toBeLessThan(all.indexOf('Sesión principal'))
-  expect(all.indexOf('Sesión paralela')).toBeLessThan(all.indexOf('Proyecto'))
+  expect(all.indexOf('Uso 5 horas')).toBeLessThan(all.indexOf('SESIÓN PRINCIPAL'))
+  expect(all.indexOf('SESIÓN PARALELA')).toBeLessThan(all.indexOf('PROYECTO'))
   const colorOf = (txt: string) => (nodes.find(t => t.text.includes(txt)) as any)?.props?.color
   expect(colorOf('93%')).toBe('red') // contexto 140k/150k
   expect(colorOf('25%')).toBe('red') // paralela casi sin avanzar
@@ -233,8 +233,8 @@ test('los subagentes en marcha salen en el lateral con su tarea; los terminados 
 
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   const all = (await pane.findAll({ type: 'Text' })).map(t => t.text).join('\n')
-  expect(all).toContain('Subagentes (1)')
-  expect(all).toContain('buscar usos de agent.list (Explore)')
+  expect(all).toContain('SUBAGENTES (1)')
+  expect(all).toContain('Buscar usos de agent.list (Explore)')
   expect(all).not.toContain('ya terminado')
   await pane.unmount()
 })

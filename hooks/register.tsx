@@ -355,7 +355,16 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
     const { s, md, used, L, status, task, todo, pct, sesPct, sesTodo, ctx, ctxColor, h5, d7, pars, subs } = await datos($)
     const w = Math.max(8, Math.min(20, e.props.bodyColumns - 6))
-    const list = (items: string[]) => <Text dimColor={!items.length}>{items.length ? items.map(x => `· ${x}`).join('\n') : t(s, 'nothing')}</Text>
+    const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1) // sentences start with a capital
+    const list = (items: string[]) => <Text dimColor={!items.length}>{items.length ? items.map(x => `• ${cap(x)}`).join('\n') : cap(t(s, 'nothing'))}</Text>
+    // Section title: blank line, a rule, then the title in capitals and colour.
+    const head = (title: string) => (
+      <>
+        <Text> </Text>
+        <Text dimColor>{'─'.repeat(w + 6)}</Text>
+        <Text bold color="cyan">{title.toUpperCase()}</Text>
+      </>
+    )
     const usage = (name: string, r?: { percentUsed: number }) => (
       <>
         <Text bold>{name}</Text>
@@ -365,21 +374,22 @@ export const register: Register = on => {
     // A session block: title, bar + %, one-sentence task, what is left.
     const block = (title: string, p: number | undefined, text: string, items: string[]) => (
       <>
-        <Text> </Text>
-        <Text bold>{title}</Text>
+        {head(title)}
         {p === undefined ? <Text dimColor>{t(s, 'noList')}</Text> : <Text color={doneColor(p)}>{bar(p, w)} {p}%</Text>}
-        {text ? <Text>{text}</Text> : null}
-        <Text bold dimColor>{t(s, 'left')} ({items.length})</Text>
+        {text ? <Text>{cap(text)}</Text> : null}
+        <Text> </Text>
+        <Text bold dimColor>{cap(t(s, 'left'))} ({items.length}):</Text>
         {list(items)}
       </>
     )
     return (
       <Box flexDirection="column">
-        <Text bold>{t(s, 'context')}</Text>
+        <Text bold color="cyan">{t(s, 'context').toUpperCase()}</Text>
         <Text color={ctxColor}>{bar(ctx, w)} {ctx}%</Text>
         <Text dimColor>{Math.round(used / 1000)}k / {L / 1000}k</Text>
-        <Text> </Text>
+        {head(t(s, 'usage'))}
         {usage(t(s, 'usage5h'), h5)}
+        <Text> </Text>
         {usage(t(s, 'usage7d'), d7)}
         {md ? (
           <>
@@ -387,8 +397,7 @@ export const register: Register = on => {
             {pars.map(p => <Box key={p.name} flexDirection="column">{block(`${t(s, 'parallel')}: ${p.name}`, p.sesPct, p.task, p.sesTodo)}</Box>)}
             {subs.length ? (
               <Box flexDirection="column">
-                <Text> </Text>
-                <Text bold>{t(s, 'agents')} ({subs.length})</Text>
+                {head(`${t(s, 'agents')} (${subs.length})`)}
                 {list(subs.map(a => `${a.text} (${a.type})`))}
               </Box>
             ) : null}
