@@ -82,6 +82,35 @@ async function translateProgress($: EngineInterface, code: string, s: Dict) {
   $.ui.toast(t(s, 'translated'))
 }
 
+// After each main-loop turn: haiku brings PROGRESS.md up to date (task line, ticks, new pending items). No conversation turn.
+// ponytail: only runs on the main loop, one at a time; the file is written only if no existing task line was lost or reworded.
+let syncing = false
+async function syncProgress($: EngineInterface, answer: string) {
+  if (syncing || !answer.trim()) return
+  syncing = true
+  try {
+    const md = await $.fs.read(at(PROGRESS)).catch(() => '')
+    if (typeof md !== 'string' || !md.trim()) return
+    const tasks = (x: string) => [...x.matchAll(/^\s*- \[[ xX]\] (.+)$/gm)].map(y => y[1].trim())
+    const r = await $.model.complete({
+      model: 'haiku', effort: 'low', maxTokens: 4000, timeoutMs: 60_000,
+      prompt: `Below is a PROGRESS.md and the assistant's last message of the work session. Update the file to match what the message says happened: tick "- [x]" the tasks that are now done, add new "- [ ]" tasks that the message says are still missing, and refresh the one-sentence task line of the session section. Never delete, reword or reorder existing task lines (only tick them), keep headings, labels, language and every other line exactly. If nothing changed, reply with the file unchanged. Reply with the file only, no comments, no code fence.
+
+--- PROGRESS.md ---
+${md}
+
+--- LAST MESSAGE ---
+${answer.slice(0, 6000)}`,
+    })
+    const out = r.isAnswered ? r.text.replace(/^```\w*\n|\n```\s*$/g, '').trim() : ''
+    const now = new Set(tasks(out))
+    if (!out || out === md.trim() || !tasks(md).every(x => now.has(x))) return
+    await $.fs.write(at(PROGRESS), out + '\n')
+    await update($, progress, () => out)
+    await refresh($)
+  } catch { /* a failed sync just leaves the file as it was */ } finally { syncing = false }
+}
+
 const handoffPrompt = (s: Dict, why: string) => t(s, 'handoffPrompt', { why, handoff: at(HANDOFF), progress: at(PROGRESS) })
 const openPane = ($: EngineInterface, s: Dict) => $.ui.open({ id: P, title: t(s, 'paneTitle') })
 
@@ -259,6 +288,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     await refreshAgents($)
+    if (!e.agentId) void syncProgress($, e.answer)
     return r
   })
 

@@ -238,3 +238,32 @@ test('los subagentes en marcha salen en el lateral con su tarea; los terminados 
   expect(all).not.toContain('ya terminado')
   await pane.unmount()
 })
+
+test('al acabar un turno haiku actualiza PROGRESS.md; si borra una tarea existente no se escribe', async ($, on) => {
+  const written: string[] = []
+  let reply = ''
+  on('command.register', () => ({ value: { command: 'whatnow' } }))
+  on('turn.complete', (_, e) => ({ text: e.answer }) as never)
+  on('fs.read', (_, e: any) => (/lang[\/]\w+\.json$/.test(e.path) ? readFile(_, e) : { value: MD }) as never)
+  on('fs.write', (_, e: any) => (written.push(e.content ?? e.text ?? e.data), { value: undefined }) as never)
+  on('settings.read', () => LANG('es'))
+  on('fs.list', () => ({ value: [] }) as never)
+  on('model.complete', () => ({ value: { isAnswered: true, text: reply, usage: {} } }) as never)
+  on('store.get', () => ({ value: undefined }) as never)
+  on('store.set', () => ({ value: undefined }) as never)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const wait = () => new Promise(r => setTimeout(r, 50))
+  const turn = { answer: 'hecho', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never
+
+  reply = MD.replace('- [ ]', '- [x]')
+  await $.turn.complete(turn)
+  await wait()
+  expect(written.length).toBe(1)
+
+  written.length = 0
+  reply = MD.replace(/^\s*- \[ \] .*$/m, '')
+  await $.turn.complete(turn)
+  await wait()
+  expect(written.length).toBe(0)
+})
