@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.3.2]
+- Haiku also ticks leftover items that the rest of `PROGRESS.md` already shows as done.
+
 ## [0.3.1]
 - Installable as a normal plugin (`marketplace.json`): active in every project, updated with `claude plugin update`.
 
