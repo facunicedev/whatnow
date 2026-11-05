@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { Sitio, Dict } from '../types'
+import type { Sitio, Dict, Limite, Paralela, Agente } from '../types'
 
 const DEFAULT_LIMIT = 150_000 // 150k of context = 100%, change with /whatnow limit <n>k
 const PROGRESS = 'PROGRESS.md' // at the project root (folder where claude was started)
@@ -16,11 +16,16 @@ const progress = atom({ plugin: 'whatnow', key: 'progress' } as const, '', { sha
 const hidden = atom({ plugin: 'whatnow', key: 'hidden' } as const, false, { shape: 'hidden-1' })
 const sitio = atom({ plugin: 'whatnow', key: 'sitio' } as const, 'banda' as Sitio, { shape: 'sitio-1' })
 const limit = atom({ plugin: 'whatnow', key: 'limit' } as const, DEFAULT_LIMIT, { shape: 'limit-1' })
+const limits = atom({ plugin: 'whatnow', key: 'limits' } as const, [] as Limite[], { shape: 'limits-1' })
+const parallels = atom({ plugin: 'whatnow', key: 'parallels' } as const, [] as Paralela[], { shape: 'parallels-1' })
+const agents = atom({ plugin: 'whatnow', key: 'agents' } as const, [] as Agente[], { shape: 'agents-1' })
 const strings = atom({ plugin: 'whatnow', key: 'strings' } as const, {} as Dict, { shape: 'strings-1' })
 
 // Words in every built-in language, so a PROGRESS.md written in one language still reads after switching.
 const SESSION_HEADINGS = ['This session', 'Esta sesión']
 const STATUS_LABELS = ['Status:', 'Estado:']
+const TASK_LABELS = ['Task:', 'Tarea:']
+const WORKTREES = '.claude/worktrees' // parallel sessions (claude -w name) each keep their own PROGRESS.md in here
 
 const fill = (s: string, v: Record<string, string | number> = {}) => s.replace(/\{(\w+)\}/g, (_, n) => String(v[n] ?? ''))
 const t = (d: Dict, k: string, v?: Record<string, string | number>) => fill(d[k] ?? k, v)
@@ -68,7 +73,7 @@ async function translateProgress($: EngineInterface, code: string, s: Dict) {
     effort: 'low',
     maxTokens: 4000,
     timeoutMs: 60_000,
-    prompt: `Translate this Markdown file into ${name}. Keep the structure exactly: heading levels, every "- [ ]" and "- [x]" line, blank lines, code, file names and paths. The heading that means "this session" must read exactly "${s.sessionHeading}" and the line label that means "status" must read exactly "${s.statusLabel}". Reply with the translated file only, no comments, no code fence.\n\n${md}`,
+    prompt: `Translate this Markdown file into ${name}. Keep the structure exactly: heading levels, every "- [ ]" and "- [x]" line, blank lines, code, file names and paths. The heading that means "this session" must read exactly "${s.sessionHeading}", the line label that means "status" must read exactly "${s.statusLabel}" and the line label that means "task" must read exactly "${s.taskLabel}". Reply with the translated file only, no comments, no code fence.\n\n${md}`,
   })
   const out = r.isAnswered ? r.text.replace(/^```\w*\n|\n```\s*$/g, '').trim() : ''
   if (!out || boxes(out) !== boxes(md)) return void $.ui.toast(t(s, 'translateFail'))
@@ -80,16 +85,13 @@ async function translateProgress($: EngineInterface, code: string, s: Dict) {
 const handoffPrompt = (s: Dict, why: string) => t(s, 'handoffPrompt', { why, handoff: at(HANDOFF), progress: at(PROGRESS) })
 const openPane = ($: EngineInterface, s: Dict) => $.ui.open({ id: P, title: t(s, 'paneTitle') })
 
-// Data shared by the band and the side pane, taken from PROGRESS.md and the context.
-async function datos($: EngineInterface) {
-  const md = await read($, progress)
-  const s = await read($, strings)
-  const used = await read($, tokens)
-  const L = await read($, limit)
+// Reads one PROGRESS.md: project part, session part, status and the one-sentence task of the session.
+function parse(md: string, s: Dict) {
   const alts = (key: string, known: string[]) => [...new Set([...known, s[key]].filter(Boolean))]
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const labels = alts('statusLabel', STATUS_LABELS)
-  const status = labels.map(l => md.split('\n').find(x => x.toLowerCase().startsWith(l.toLowerCase()))?.slice(l.length).trim()).find(Boolean) ?? ''
+  const label = (text: string, labels: string[]) =>
+    labels.map(l => text.split('\n').find(x => x.toLowerCase().startsWith(l.toLowerCase()))?.slice(l.length).trim()).find(Boolean) ?? ''
+  const status = label(md, alts('statusLabel', STATUS_LABELS))
   // The session section runs to the next heading (or the end); the rest is the project.
   const headings = alts('sessionHeading', SESSION_HEADINGS).map(esc).join('|')
   const sec = md.match(new RegExp(`^#{2,}[ \\t]*(?:${headings})[^\\n]*\\n?([\\s\\S]*?)(?=^#{1,6}[ \\t]|$(?![\\s\\S]))`, 'im'))
@@ -100,16 +102,48 @@ async function datos($: EngineInterface) {
   }
   const { todo, pct } = count(sec ? md.replace(sec[0], '') : md)
   const ses = count(sec ? sec[1] : '')
-  const sesPct = ses.n ? ses.pct : undefined // undefined = no session list yet
-  const ctx = Math.min(100, Math.round((used / L) * 100))
-  const ctxColor = ctx >= 90 ? 'red' : ctx >= 70 ? 'yellow' : 'green'
-  return { s, md, used, L, status, todo, pct, sesPct, sesTodo: ses.todo, ctx, ctxColor }
+  return {
+    status, todo, pct,
+    task: sec ? label(sec[1], alts('taskLabel', TASK_LABELS)) : '',
+    sesPct: ses.n ? ses.pct : undefined, // undefined = no session list yet
+    sesTodo: ses.todo,
+  }
 }
+
+// Data shared by the band and the side pane: PROGRESS.md, the context, the usage windows and the parallel sessions.
+async function datos($: EngineInterface) {
+  const md = await read($, progress)
+  const s = await read($, strings)
+  const used = await read($, tokens)
+  const L = await read($, limit)
+  const ctx = Math.min(100, Math.round((used / L) * 100))
+  const rl = await read($, limits)
+  const subs = await read($, agents)
+  const pars = (await read($, parallels)).map(p => ({ name: p.name, ...parse(p.md, s) }))
+  return { s, md, used, L, ...parse(md, s), ctx, ctxColor: fillColor(ctx), h5: rl.find(x => x.kind === 'five_hour'), d7: rl.find(x => x.kind === 'seven_day'), pars, subs }
+}
+// Colours: the more is used the worse (context, usage); the more is done the better (progress).
+const fillColor = (p: number) => (p >= 90 ? 'red' : p >= 70 ? 'yellow' : 'green')
+const doneColor = (p: number) => (p < 30 ? 'red' : p < 70 ? 'yellow' : 'green')
 const bar = (p: number, width = 20) => '█'.repeat(Math.round((p / 100) * width)).padEnd(width, '░')
 
 let warned = false // ponytail: one warning per session; re-armed when the context drops below the limit (after /clear or compaction)
 
+// Subagents running now, from the engine's own list; written only when it changed so the panel does not redraw for nothing.
+async function refreshAgents($: EngineInterface) {
+  const all = await $.agent.list().catch(() => [])
+  const live: Agente[] = all.filter(a => ['pending', 'running', 'waiting'].includes(a.status)).map(a => ({ id: a.id, text: a.description || a.name || a.type, type: a.type }))
+  if (JSON.stringify(live) !== JSON.stringify(await read($, agents))) await update($, agents, () => live)
+}
+
 async function refresh($: EngineInterface) {
+  const dir = at(WORKTREES)
+  const pars: Paralela[] = []
+  for (const d of (await $.fs.list(dir).catch(() => [])).filter(f => f.kind === 'dir')) {
+    const md = await $.fs.read(`${dir}/${d.name}/${PROGRESS}`).catch(() => '')
+    if (typeof md === 'string' && md.trim()) pars.push({ name: d.name, md: md.replace(/\r\n/g, '\n') })
+  }
+  await update($, parallels, () => pars) // a removed worktree drops out of the panel by itself
   const text = await $.fs.read(at(PROGRESS)).catch(() => undefined)
   if (typeof text !== 'string' || !text.trim()) return // ponytail: a failed read keeps the last good text; the panel is not wiped
   await update($, progress, () => text.replace(/\r\n/g, '\n'))
@@ -197,7 +231,9 @@ export const register: Register = on => {
     const used = e.context.tokens ?? 0
     const L = await read($, limit)
     await update($, tokens, () => used)
+    await update($, limits, () => e.rateLimits ?? [])
     await refresh($)
+    await refreshAgents($)
     if (used < L) warned = false
     else if (!warned) {
       warned = true
@@ -212,6 +248,19 @@ export const register: Register = on => {
   on('session.compact', { trigger: 'auto' }, async ($, e, next) =>
     e.agentId ? next(e) : next({ ...e, instructions: handoffPrompt(await read($, strings), t(await read($, strings), 'whyCompact')) }),
   )
+
+  // Subagents start and stop between turns of the main loop, so look at every tool call (the ones inside a subagent too) and at the end of each turn.
+  on('tool.call', async ($, e, next) => {
+    await refreshAgents($)
+    const r = await next(e)
+    await refreshAgents($)
+    return r
+  })
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    await refreshAgents($)
+    return r
+  })
 
   // First message of each conversation: instructions + the previous session's handoff, if any.
   on('prompt.context', async ($, e, next) => {
@@ -240,14 +289,24 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || (await read($, hidden)) || (await read($, sitio)) === 'lateral') return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const { s, md, pct, sesPct, ctx, ctxColor } = await datos($)
-    // ponytail: one line only; the "Falta" lists live in the side pane (/whatnow lateral).
-    const rest = md
-      ? ` · ${t(s, 'session')} ${sesPct === undefined ? '–' : `${bar(sesPct, 6)} ${sesPct}%`} · ${t(s, 'project')} ${bar(pct, 6)} ${pct}%`
-      : ` · ${t(s, 'noFile', { file: PROGRESS })}`
+    const { s, md, pct, sesPct, ctx, ctxColor, h5, d7, subs } = await datos($)
+    // ponytail: one line only; usage details, task descriptions, parallel sessions and "Left" lists live in the side pane (/whatnow side).
+    const pc = (p: number | undefined, color: (n: number) => string) => (p === undefined ? <Text dimColor>–</Text> : <Text color={color(p)}>{bar(p, 6)} {p}%</Text>)
     return (
       <Box>
-        <Text wrap="truncate"><Text bold>{t(s, 'context')} </Text><Text color={ctxColor}>{bar(ctx, 6)} {ctx}%</Text><Text dimColor>{rest}</Text></Text>
+        <Text wrap="truncate">
+          <Text bold>{t(s, 'context')} </Text>{pc(ctx, fillColor)}
+          {h5 || d7 ? <Text dimColor> · {t(s, 'usage')} </Text> : null}
+          {h5 ? <Text color={fillColor(h5.percentUsed)}>{Math.round(h5.percentUsed)}%</Text> : null}
+          {h5 && d7 ? <Text dimColor>/</Text> : null}
+          {d7 ? <Text color={fillColor(d7.percentUsed)}>{Math.round(d7.percentUsed)}%</Text> : null}
+          {subs.length ? <Text dimColor> · {t(s, 'agents')} {subs.length}</Text> : null}
+          {md ? <Text dimColor> · {t(s, 'session')} </Text> : null}
+          {md ? pc(sesPct, doneColor) : null}
+          {md ? <Text dimColor> · {t(s, 'project')} </Text> : null}
+          {md ? pc(pct, doneColor) : null}
+          {md ? null : <Text dimColor> · {t(s, 'noFile', { file: PROGRESS })}</Text>}
+        </Text>
       </Box>
     )
   })
@@ -255,29 +314,46 @@ export const register: Register = on => {
   // Side pane: the same, vertical, with the full pending lists.
   on('ui.render', { component: 'Pane', requestId: P }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const { s, md, used, L, status, todo, pct, sesPct, sesTodo, ctx, ctxColor } = await datos($)
+    const { s, md, used, L, status, task, todo, pct, sesPct, sesTodo, ctx, ctxColor, h5, d7, pars, subs } = await datos($)
     const w = Math.max(8, Math.min(20, e.props.bodyColumns - 6))
     const list = (items: string[]) => <Text dimColor={!items.length}>{items.length ? items.map(x => `· ${x}`).join('\n') : t(s, 'nothing')}</Text>
+    const usage = (name: string, r?: { percentUsed: number }) => (
+      <>
+        <Text bold>{name}</Text>
+        {r ? <Text color={fillColor(r.percentUsed)}>{bar(r.percentUsed, w)} {Math.round(r.percentUsed)}%</Text> : <Text dimColor>{t(s, 'noUsage')}</Text>}
+      </>
+    )
+    // A session block: title, bar + %, one-sentence task, what is left.
+    const block = (title: string, p: number | undefined, text: string, items: string[]) => (
+      <>
+        <Text> </Text>
+        <Text bold>{title}</Text>
+        {p === undefined ? <Text dimColor>{t(s, 'noList')}</Text> : <Text color={doneColor(p)}>{bar(p, w)} {p}%</Text>}
+        {text ? <Text>{text}</Text> : null}
+        <Text bold dimColor>{t(s, 'left')} ({items.length})</Text>
+        {list(items)}
+      </>
+    )
     return (
       <Box flexDirection="column">
         <Text bold>{t(s, 'context')}</Text>
         <Text color={ctxColor}>{bar(ctx, w)} {ctx}%</Text>
         <Text dimColor>{Math.round(used / 1000)}k / {L / 1000}k</Text>
         <Text> </Text>
+        {usage(t(s, 'usage5h'), h5)}
+        {usage(t(s, 'usage7d'), d7)}
         {md ? (
           <>
-            <Text bold>{t(s, 'session')}</Text>
-            <Text dimColor={sesPct === undefined}>{sesPct === undefined ? t(s, 'noList') : `${bar(sesPct, w)} ${sesPct}%`}</Text>
-            <Text> </Text>
-            <Text bold>{t(s, 'project')}</Text>
-            <Text>{bar(pct, w)} {pct}%</Text>
-            <Text dimColor>{status}</Text>
-            <Text> </Text>
-            <Text bold>{t(s, 'leftSession')} ({sesTodo.length})</Text>
-            {list(sesTodo)}
-            <Text> </Text>
-            <Text bold>{t(s, 'leftProject')} ({todo.length})</Text>
-            {list(todo)}
+            {block(t(s, 'mainSession'), sesPct, task, sesTodo)}
+            {pars.map(p => <Box key={p.name} flexDirection="column">{block(`${t(s, 'parallel')}: ${p.name}`, p.sesPct, p.task, p.sesTodo)}</Box>)}
+            {subs.length ? (
+              <Box flexDirection="column">
+                <Text> </Text>
+                <Text bold>{t(s, 'agents')} ({subs.length})</Text>
+                {list(subs.map(a => `${a.text} (${a.type})`))}
+              </Box>
+            ) : null}
+            {block(t(s, 'project'), pct, status, todo)}
           </>
         ) : (
           <Text dimColor>{t(s, 'noFilePane', { file: PROGRESS })}</Text>
