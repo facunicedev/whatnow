@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.3.1]
+- Installable as a normal plugin (`marketplace.json`): active in every project, updated with `claude plugin update`.
+
 ## [0.3.0]
 - Side pane redesigned: context, 5-hour usage and weekly usage in three columns; titles in capitals, rules between sections, sentences start with a capital.
 - Usage windows (5 hours and week) with colours on every percentage.

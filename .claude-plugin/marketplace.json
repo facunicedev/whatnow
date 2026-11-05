@@ -1,0 +1,11 @@
+{
+  "name": "whatnow",
+  "owner": { "name": "facunicedev" },
+  "plugins": [
+    {
+      "name": "whatnow",
+      "source": "./",
+      "description": "Panel with context use, usage limits, session and subagents and project progress, plus automatic handoff."
+    }
+  ]
+}

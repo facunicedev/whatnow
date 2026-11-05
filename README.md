@@ -28,13 +28,14 @@ Every percentage is coloured: for context and usage, green below 70%, yellow fro
 
 ## Install
 
-whatnow is a Claude Code mod. Copy this folder into your mods directory:
+whatnow is a Claude Code mod. Install it once and it is active in every project:
 
 ```bash
-git clone https://github.com/facunicedev/whatnow.git ~/.claude/mods/whatnow
+claude plugin marketplace add facunicedev/whatnow
+claude plugin install whatnow@whatnow
 ```
 
-Restart Claude Code. Check it with `claude plugin validate ~/.claude/mods/whatnow`.
+Restart Claude Code. Update later with `claude plugin update whatnow@whatnow`.
 
 ## Usage
 
