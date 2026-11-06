@@ -1,6 +1,6 @@
 {
   "name": "whatnow",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "author": { "name": "facunicedev" },
   "description": "/whatnow: a panel with context use, usage limits, session and subagents and project progress (from PROGRESS.md), plus automatic handoff before the context fills up. Languages: auto, es, en, or your own lang/<code>.json",
   "types": "./types/index.d.ts"

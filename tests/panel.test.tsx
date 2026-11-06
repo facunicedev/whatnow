@@ -5,13 +5,13 @@ const en = {
   context: 'Context', session: 'Session', project: 'Project', leftSession: 'Left in session', leftProject: 'Left in project',
   nothing: 'nothing', sessionHeading: 'This session', statusLabel: 'Status:', side: 'Shown at the side.', band: 'Shown above the prompt.',
   sideNarrow: ' Note: {columns} columns{noFs}', noFs: ', not fullscreen', limitSet: 'Context limit: {n}k', paneTitle: 'What now',
-  agents: 'Subagents', usage: 'Usage', usage5h: 'Usage 5h', usage7d: 'Usage week', noUsage: 'no data', mainSession: 'Main session', parallel: 'Parallel session', left: 'Left', taskLabel: 'Task:',
+  agents: 'Subagents', usage: 'Usage', usage5h: 'Usage 5h', usage7d: 'Usage week', noUsage: 'no data', mainSession: 'Main session', parallel: 'Parallel session', left: 'Left', taskLabel: 'Task:', peers: 'Open sessions', busy: 'working', idle: 'waiting', here: 'this one',
   langSet: 'Language: {lang} (saved).', handoffPrompt: '{why} handoff in {handoff}', whyFull: 'Context is full ({n}k).', toastFull: 'Context full',
 }
 const es = {
   ...en, context: 'Contexto', session: 'Sesión', project: 'Proyecto', leftSession: 'Falta en la sesión', leftProject: 'Falta en el proyecto',
   nothing: 'nada', sessionHeading: 'Esta sesión', statusLabel: 'Estado:', side: 'En el lateral (se recuerda).', band: 'Encima del prompt (se recuerda).',
-  agents: 'Subagentes', usage: 'Uso', usage5h: 'Uso 5 horas', usage7d: 'Uso semana', noUsage: 'sin datos', mainSession: 'Sesión principal', parallel: 'Sesión paralela', left: 'Falta', taskLabel: 'Tarea:',
+  agents: 'Subagentes', usage: 'Uso', usage5h: 'Uso 5 horas', usage7d: 'Uso semana', noUsage: 'sin datos', mainSession: 'Sesión principal', parallel: 'Sesión paralela', left: 'Falta', taskLabel: 'Tarea:', peers: 'Sesiones abiertas', busy: 'trabajando', idle: 'esperando', here: 'esta',
   sideNarrow: ' Ojo: {columns} columnas{noFs}', limitSet: 'Límite de contexto: {n}k', whyFull: 'Contexto lleno ({n}k).', langSet: 'Idioma: {lang} (guardado).',
 }
 
@@ -279,4 +279,28 @@ test('tras un /clear (sin session.start) el panel se rellena solo: etiquetas tra
   const all = (await pane.findAll({ type: 'Text' })).map(t => t.text).join('\n')
   expect(all).toContain('USO 5 HORAS')
   expect(all).not.toContain('USAGE5H')
+})
+
+test('el lateral lista las sesiones abiertas del proyecto, también las -w sin PROGRESS.md, y no las de otras carpetas', async ($, on) => {
+  const win = (p: string) => p.split('/').join(String.fromCharCode(92)) // Windows paths, as Claude Code writes them
+  const S = (cwd: string, name: string, status: string) => JSON.stringify({ kind: 'interactive', cwd, name, status, sessionId: name })
+  const files: Record<string, string> = {
+    'a.json': S(win('C:/proj'), 'proj-83', 'idle'),
+    'b.json': S(win('C:/proj'), 'proj-9f', 'busy'),
+    'c.json': S(win('C:/proj/.claude/worktrees/estructura'), 'proj-aa', 'busy'),
+    'd.json': S(win('C:/otro'), 'otro-1', 'idle'),
+  }
+  on('command.register', () => ({ value: { command: 'whatnow' } }))
+  on('fs.read', (_, e: any) => (e.path.includes('sessions') ? { value: files[Object.keys(files).find(k => e.path.endsWith(k)) ?? ''] } : readFile(_, e)) as never)
+  on('fs.list', (_, e: any) => ({ value: /sessions$/.test(e.path ?? '') ? Object.keys(files).map(name => ({ name, kind: 'file' })) : [] }) as never)
+  on('settings.read', () => LANG('es'))
+  on('store.get', () => ({ value: undefined }) as never)
+  on('store.set', () => ({ value: undefined }) as never)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: win('C:/proj'), surface: 'terminal', isInteractive: true })
+  const all = (await (await $.ui.mount({ ...PANE, surface: 'terminal' } as never)).findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  expect(all).toContain('SESIONES ABIERTAS (3)')
+  expect(all).toContain('Estructura · trabajando')
+  expect(all).toContain('Proj-83 · esperando')
+  expect(all).not.toContain('otro-1')
 })

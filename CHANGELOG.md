@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.3.4]
+- The panel lists every session open in the project (several in the same folder, and `claude -w` ones even without a `PROGRESS.md`), with working/waiting state. It reads Claude Code's own session registry in `~/.claude/sessions`.
+
 ## [0.3.3]
 - After `/clear` the side pane no longer shows internal label names (`USAGE5H`…) or a second band above the prompt: the panel refills its language and position by itself.
 

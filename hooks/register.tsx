@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
-import type { Sitio, Dict, Limite, Paralela, Agente } from '../types'
+import type { Sitio, Dict, Limite, Paralela, Agente, Abierta } from '../types'
 
 const DEFAULT_LIMIT = 150_000 // 150k of context = 100%, change with /whatnow limit <n>k
 const PROGRESS = 'PROGRESS.md' // at the project root (folder where claude was started)
@@ -9,6 +9,7 @@ const P = 'whatnow'
 
 // Project root, fixed when the session opens: if the working folder changes (a cd), PROGRESS and handoff are not lost.
 let root = ''
+let me = '' // this session's id, if the engine gives it (used only to tag "this one" in the list)
 const at = (f: string) => (root ? `${root}/${f}` : f)
 
 const tokens = atom({ plugin: 'whatnow', key: 'tokens' } as const, 0, { shape: 'tokens-1' })
@@ -19,6 +20,7 @@ const limit = atom({ plugin: 'whatnow', key: 'limit' } as const, DEFAULT_LIMIT, 
 const limits = atom({ plugin: 'whatnow', key: 'limits' } as const, [] as Limite[], { shape: 'limits-1' })
 const parallels = atom({ plugin: 'whatnow', key: 'parallels' } as const, [] as Paralela[], { shape: 'parallels-1' })
 const agents = atom({ plugin: 'whatnow', key: 'agents' } as const, [] as Agente[], { shape: 'agents-1' })
+const peers = atom({ plugin: 'whatnow', key: 'peers' } as const, [] as Abierta[], { shape: 'peers-1' })
 const strings = atom({ plugin: 'whatnow', key: 'strings' } as const, {} as Dict, { shape: 'strings-1' })
 
 // Words in every built-in language, so a PROGRESS.md written in one language still reads after switching.
@@ -175,8 +177,9 @@ async function datos($: EngineInterface) {
   const ctx = Math.min(100, Math.round((used / L) * 100))
   const rl = await read($, limits)
   const subs = await read($, agents)
+  const open = await read($, peers)
   const pars = (await read($, parallels)).map(p => ({ name: p.name, ...parse(p.md, s) }))
-  return { s, lateral, md, used, L, ...parse(md, s), ctx, ctxColor: fillColor(ctx), h5: rl.find(x => x.kind === 'five_hour'), d7: rl.find(x => x.kind === 'seven_day'), pars, subs }
+  return { s, lateral, md, used, L, ...parse(md, s), ctx, ctxColor: fillColor(ctx), h5: rl.find(x => x.kind === 'five_hour'), d7: rl.find(x => x.kind === 'seven_day'), pars, subs, open }
 }
 // Colours: the more is used the worse (context, usage); the more is done the better (progress).
 const fillColor = (p: number) => (p >= 90 ? 'red' : p >= 70 ? 'yellow' : 'green')
@@ -192,7 +195,30 @@ async function refreshAgents($: EngineInterface) {
   if (JSON.stringify(live) !== JSON.stringify(await read($, agents))) await update($, agents, () => live)
 }
 
+// Sessions open in this project (the folder itself and its .claude/worktrees/*), from the registry Claude Code keeps in ~/.claude/sessions (one JSON per open session).
+// ponytail: undocumented file format; if it changes the list just stays empty. Assumes a closed session removes its file.
+async function refreshPeers($: EngineInterface) {
+  if (!root) return
+  const flat = (p: string) => p.replace(/\\/g, '/').replace(/\/$/, '')
+  const home = flat($.plugin.root).split('/plugins/')[0]
+  const norm = (p: string) => flat(p).toLowerCase()
+  const proj = norm(root.replace(/[\\/]\.claude[\\/]worktrees[\\/][^\\/]+$/, '')) // a claude -w session still belongs to the main project
+  const out: Abierta[] = []
+  for (const f of (await $.fs.list(`${home}/sessions`).catch(() => [])).filter(f => f.name.endsWith('.json'))) {
+    try {
+      const x = JSON.parse(await $.fs.read(`${home}/sessions/${f.name}`))
+      const cwd = norm(String(x.cwd ?? ''))
+      if (x.kind !== 'interactive' || !(cwd === proj || cwd.startsWith(proj + '/'))) continue
+      const wt = cwd.startsWith(proj + '/.claude/worktrees/') ? flat(String(x.cwd)).split('/').pop() : ''
+      out.push({ name: wt || String(x.name ?? f.name), status: String(x.status ?? ''), self: !!me && x.sessionId === me })
+    } catch { /* unreadable file: skip it */ }
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name))
+  if (JSON.stringify(out) !== JSON.stringify(await read($, peers))) await update($, peers, () => out)
+}
+
 async function refresh($: EngineInterface) {
+  await refreshPeers($)
   const dir = at(WORKTREES)
   const pars: Paralela[] = []
   for (const d of (await $.fs.list(dir).catch(() => [])).filter(f => f.kind === 'dir')) {
@@ -208,6 +234,7 @@ async function refresh($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     root = e.cwd
+    me = String((e as { sessionId?: string }).sessionId ?? '')
     await loadLang($)
     await registerCommand($)
     const saved = await $.store.get('limit') // remembered between sessions
@@ -350,7 +377,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || (await read($, hidden)) || (await view($)).lateral) return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const { s, md, pct, sesPct, ctx, ctxColor, h5, d7, subs } = await datos($)
+    const { s, md, pct, sesPct, ctx, ctxColor, h5, d7, subs, open } = await datos($)
     // ponytail: one line only; usage details, task descriptions, parallel sessions and "Left" lists live in the side pane (/whatnow side).
     const pc = (p: number | undefined, color: (n: number) => string) => (p === undefined ? <Text dimColor>–</Text> : <Text color={color(p)}>{bar(p, 6)} {p}%</Text>)
     return (
@@ -362,6 +389,7 @@ export const register: Register = on => {
           {h5 && d7 ? <Text dimColor>/</Text> : null}
           {d7 ? <Text color={fillColor(d7.percentUsed)}>{Math.round(d7.percentUsed)}%</Text> : null}
           {subs.length ? <Text dimColor> · {t(s, 'agents')} {subs.length}</Text> : null}
+          {open.length > 1 ? <Text dimColor> · {t(s, 'peers')} {open.length}</Text> : null}
           {md ? <Text dimColor> · {t(s, 'session')} </Text> : null}
           {md ? pc(sesPct, doneColor) : null}
           {md ? <Text dimColor> · {t(s, 'project')} </Text> : null}
@@ -375,7 +403,7 @@ export const register: Register = on => {
   // Side pane: the same, vertical, with the full pending lists.
   on('ui.render', { component: 'Pane', requestId: P }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const { s, md, used, L, status, task, todo, pct, sesPct, sesTodo, ctx, ctxColor, h5, d7, pars, subs } = await datos($)
+    const { s, md, used, L, status, task, todo, pct, sesPct, sesTodo, ctx, ctxColor, h5, d7, pars, subs, open } = await datos($)
     const w = Math.max(8, Math.min(20, e.props.bodyColumns - 6))
     const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1) // sentences start with a capital
     const list = (items: string[]) => <Text dimColor={!items.length}>{items.length ? items.map(x => `• ${cap(x)}`).join('\n') : cap(t(s, 'nothing'))}</Text>
@@ -418,6 +446,12 @@ export const register: Register = on => {
           {col(t(s, 'usage5h'), h5)}
           {col(t(s, 'usage7d'), d7)}
         </Box>
+        {open.length > 1 ? (
+          <Box flexDirection="column">
+            {head(`${t(s, 'peers')} (${open.length})`)}
+            {list(open.map(p => `${p.name} · ${t(s, p.status === 'busy' ? 'busy' : 'idle')}${p.self ? ` (${t(s, 'here')})` : ''}`))}
+          </Box>
+        ) : null}
         {md ? (
           <>
             {block(t(s, 'mainSession'), sesPct, task, sesTodo)}

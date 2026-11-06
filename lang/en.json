@@ -46,5 +46,9 @@
   "parallel": "Parallel session",
   "left": "Left",
   "taskLabel": "Task:",
-  "agents": "Subagents"
+  "agents": "Subagents",
+  "peers": "Open sessions",
+  "busy": "working",
+  "idle": "waiting",
+  "here": "this one"
 }

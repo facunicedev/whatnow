@@ -3,6 +3,7 @@ export type Sitio = 'banda' | 'lateral'
 export type Dict = Record<string, string>
 export type Limite = { kind: string; percentUsed: number; resetsAt?: string }
 export type Agente = { id: string; text: string; type: string }
+export type Abierta = { name: string; status: string; self: boolean }
 export type Paralela = { name: string; md: string }
 
 declare module 'claude-code' {
@@ -17,6 +18,7 @@ declare module 'claude-code' {
       limits: Shaped<Limite[]>
       parallels: Shaped<Paralela[]>
       agents: Shaped<Agente[]>
+      peers: Shaped<Abierta[]>
     }
   }
 }
