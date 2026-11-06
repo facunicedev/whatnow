@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.3.5]
+- Open sessions are seen from each session's own point of view: it is "this one (main)" and every other session is "parallel". A session finds out which one it is by a mark it leaves in the conversation (Claude Code does not tell mods its session id). The progress of the other sessions is read from each one's own folder.
+- Haiku sees the last four messages instead of only the last one, ticks what is done or superseded, and does not repeat tasks. Everything it ticks or adds is logged in `.claude/haiku-changes.md`; at `/whatnow progress` and at every handoff the session's own model confirms or undoes those changes and empties the log.
+
 ## [0.3.4]
 - The panel lists every session open in the project (several in the same folder, and `claude -w` ones even without a `PROGRESS.md`), with working/waiting state. It reads Claude Code's own session registry in `~/.claude/sessions`.
 

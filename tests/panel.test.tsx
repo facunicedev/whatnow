@@ -5,13 +5,13 @@ const en = {
   context: 'Context', session: 'Session', project: 'Project', leftSession: 'Left in session', leftProject: 'Left in project',
   nothing: 'nothing', sessionHeading: 'This session', statusLabel: 'Status:', side: 'Shown at the side.', band: 'Shown above the prompt.',
   sideNarrow: ' Note: {columns} columns{noFs}', noFs: ', not fullscreen', limitSet: 'Context limit: {n}k', paneTitle: 'What now',
-  agents: 'Subagents', usage: 'Usage', usage5h: 'Usage 5h', usage7d: 'Usage week', noUsage: 'no data', mainSession: 'Main session', parallel: 'Parallel session', left: 'Left', taskLabel: 'Task:', peers: 'Open sessions', busy: 'working', idle: 'waiting', here: 'this one',
+  agents: 'Subagents', usage: 'Usage', usage5h: 'Usage 5h', usage7d: 'Usage week', noUsage: 'no data', mainSession: 'Main session', parallel: 'Parallel session', left: 'Left', taskLabel: 'Task:', peers: 'Open sessions', busy: 'working', idle: 'waiting', here: 'this one (main)', parallelWord: 'parallel',
   langSet: 'Language: {lang} (saved).', handoffPrompt: '{why} handoff in {handoff}', whyFull: 'Context is full ({n}k).', toastFull: 'Context full',
 }
 const es = {
   ...en, context: 'Contexto', session: 'Sesión', project: 'Proyecto', leftSession: 'Falta en la sesión', leftProject: 'Falta en el proyecto',
   nothing: 'nada', sessionHeading: 'Esta sesión', statusLabel: 'Estado:', side: 'En el lateral (se recuerda).', band: 'Encima del prompt (se recuerda).',
-  agents: 'Subagentes', usage: 'Uso', usage5h: 'Uso 5 horas', usage7d: 'Uso semana', noUsage: 'sin datos', mainSession: 'Sesión principal', parallel: 'Sesión paralela', left: 'Falta', taskLabel: 'Tarea:', peers: 'Sesiones abiertas', busy: 'trabajando', idle: 'esperando', here: 'esta',
+  agents: 'Subagentes', usage: 'Uso', usage5h: 'Uso 5 horas', usage7d: 'Uso semana', noUsage: 'sin datos', mainSession: 'Sesión principal', parallel: 'Sesión paralela', left: 'Falta', taskLabel: 'Tarea:', peers: 'Sesiones abiertas', busy: 'trabajando', idle: 'esperando', here: 'esta (principal)', parallelWord: 'paralela',
   sideNarrow: ' Ojo: {columns} columnas{noFs}', limitSet: 'Límite de contexto: {n}k', whyFull: 'Contexto lleno ({n}k).', langSet: 'Idioma: {lang} (guardado).',
 }
 
@@ -184,14 +184,19 @@ test('el lateral muestra uso 5h/semana, la sesión principal con su tarea, las p
   const PAR = ['# x', '', '## Esta sesión', 'Tarea: arreglar el login', '- [x] a', '- [ ] b', '- [ ] c', '- [ ] d'].join('\n')
   const MAIN = MD.replace('## Esta sesión', '## Esta sesión\nTarea: probar el traspaso')
   on('command.register', () => ({ value: { command: 'whatnow' } }))
-  on('fs.read', (_, e: any) => (/lang[\\/]\w+\.json$/.test(e.path) ? readFile(_, e) : { value: /worktrees[\\/]uno/.test(e.path) ? PAR : MAIN }) as never)
+  const win = (p: string) => p.split('/').join(String.fromCharCode(92))
+  const SES: Record<string, string> = {
+    'a.json': JSON.stringify({ kind: 'interactive', cwd: win('C:/proj'), name: 'proj-1', status: 'idle', sessionId: 'a' }),
+    'b.json': JSON.stringify({ kind: 'interactive', cwd: win('C:/proj/.claude/worktrees/uno'), name: 'proj-2', status: 'busy', sessionId: 'b' }),
+  }
+  on('fs.read', (_, e: any) => (e.path.includes('sessions') ? { value: SES[Object.keys(SES).find(k => e.path.endsWith(k)) ?? ''] } : e.path.includes('worktrees') ? { value: PAR } : /lang/.test(e.path) ? readFile(_, e) : { value: MAIN }) as never)
   on('settings.read', () => LANG('es'))
-  on('fs.list', (_, e: any) => ({ value: /worktrees/.test(e.path ?? '') ? [{ name: 'uno', kind: 'dir' }, { name: 'nota.txt', kind: 'file' }] : [] }) as never)
+  on('fs.list', (_, e: any) => ({ value: /sessions$/.test(e.path ?? '') ? Object.keys(SES).map(name => ({ name, kind: 'file' })) : [] }) as never)
   on('store.get', () => ({ value: undefined }) as never)
   on('store.set', () => ({ value: undefined }) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.measure', (_, e) => ({ changed: e.changed }))
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.session.start({ cwd: win('C:/proj'), surface: 'terminal', isInteractive: true })
   await $.session.measure({ context: { tokens: 140_000, window: 200_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 23.5 }, { kind: 'seven_day', percentUsed: 75 }], changed: ['context'] } as never)
 
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
@@ -259,7 +264,14 @@ test('al acabar un turno haiku actualiza PROGRESS.md; si borra una tarea existen
   reply = MD.replace('- [ ]', '- [x]')
   await $.turn.complete(turn)
   await wait()
-  expect(written.length).toBe(1)
+  expect(written.length).toBe(2) // PROGRESS.md and the log of what haiku changed
+  expect(written[1]).toContain('- ticked: probar el traspaso') // so the session's model can confirm or refute it at the handoff
+
+  written.length = 0
+  reply = MD + String.fromCharCode(10) + '- [ ] cosa nueva'
+  await $.turn.complete(turn)
+  await wait()
+  expect(written[1]).toContain('- added: cosa nueva')
 
   written.length = 0
   reply = MD.replace(/^\s*- \[ \] .*$/m, '')
@@ -282,6 +294,7 @@ test('tras un /clear (sin session.start) el panel se rellena solo: etiquetas tra
 })
 
 test('el lateral lista las sesiones abiertas del proyecto, también las -w sin PROGRESS.md, y no las de otras carpetas', async ($, on) => {
+  let mark = ''
   const win = (p: string) => p.split('/').join(String.fromCharCode(92)) // Windows paths, as Claude Code writes them
   const S = (cwd: string, name: string, status: string) => JSON.stringify({ kind: 'interactive', cwd, name, status, sessionId: name })
   const files: Record<string, string> = {
@@ -291,16 +304,22 @@ test('el lateral lista las sesiones abiertas del proyecto, también las -w sin P
     'd.json': S(win('C:/otro'), 'otro-1', 'idle'),
   }
   on('command.register', () => ({ value: { command: 'whatnow' } }))
-  on('fs.read', (_, e: any) => (e.path.includes('sessions') ? { value: files[Object.keys(files).find(k => e.path.endsWith(k)) ?? ''] } : readFile(_, e)) as never)
+  on('fs.read', (_, e: any) => (e.path.includes('projects') ? { value: e.path.endsWith('proj-9f.jsonl') ? mark : 'sin marca' } : e.path.includes('sessions') ? { value: files[Object.keys(files).find(k => e.path.endsWith(k)) ?? ''] } : readFile(_, e)) as never)
   on('fs.list', (_, e: any) => ({ value: /sessions$/.test(e.path ?? '') ? Object.keys(files).map(name => ({ name, kind: 'file' })) : [] }) as never)
   on('settings.read', () => LANG('es'))
   on('store.get', () => ({ value: undefined }) as never)
   on('store.set', () => ({ value: undefined }) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.write', () => ({ value: undefined }) as never)
+  on('prompt.context', (_, e) => ({ blocks: e.blocks }) as never)
+  on('session.measure', (_, e) => ({ changed: e.changed }))
   await $.session.start({ cwd: win('C:/proj'), surface: 'terminal', isInteractive: true })
+  mark = /whatnow-[a-z0-9]+/.exec(JSON.stringify(await $.prompt.context({ blocks: [] } as never)))?.[0] ?? 'no-mark' // the mark the mod leaves in the conversation
+  await $.session.measure({ context: { tokens: 1000, window: 200_000 }, rateLimits: [], changed: ['context'] } as never)
   const all = (await (await $.ui.mount({ ...PANE, surface: 'terminal' } as never)).findAll({ type: 'Text' })).map(t => t.text).join('\n')
   expect(all).toContain('SESIONES ABIERTAS (3)')
-  expect(all).toContain('Estructura · trabajando')
-  expect(all).toContain('Proj-83 · esperando')
+  expect(all).toContain('Estructura · paralela · trabajando')
+  expect(all).toContain('Proj-9f · esta (principal) · trabajando') // found itself by the mark: main for itself
+  expect(all).toContain('Proj-83 · paralela · esperando') // the others are parallel for it
   expect(all).not.toContain('otro-1')
 })
