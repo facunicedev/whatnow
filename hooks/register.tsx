@@ -147,16 +147,36 @@ function parse(md: string, s: Dict) {
 }
 
 // Data shared by the band and the side pane: PROGRESS.md, the context, the usage windows and the parallel sessions.
+// After /clear the in-memory state can come back empty while the side pane is still open (raw labels, band shown twice).
+// ponytail: only the dictionary is checked; add other atoms here if they ever show the same problem.
+// Drawing is pure (no state writes), so here we only READ: if the atoms are empty, the dictionary and the pane position come from disk/store.
+async function view($: EngineInterface) {
+  const have = await read($, strings)
+  if (Object.keys(have).length) return { s: have, lateral: (await read($, sitio)) === 'lateral' }
+  const pref = (await $.store.get('lang')) ?? 'auto'
+  const code = pref === 'auto' ? await detect($) : String(pref)
+  const base = (await getLang($, 'en')) ?? {}
+  const own = code === 'en' ? base : await getLang($, code)
+  return { s: { ...base, ...(own ?? {}) }, lateral: (await $.store.get('sitio')) === 'lateral' }
+}
+// The same refill, but writing the atoms: only from event handlers (never while drawing).
+async function ensureInit($: EngineInterface) {
+  if (Object.keys(await read($, strings)).length) return
+  await loadLang($)
+  if ((await $.store.get('sitio')) === 'lateral') await update($, sitio, () => 'lateral')
+  const saved = await $.store.get('limit')
+  if (typeof saved === 'number') await update($, limit, () => saved)
+}
 async function datos($: EngineInterface) {
+  const { s, lateral } = await view($)
   const md = await read($, progress)
-  const s = await read($, strings)
   const used = await read($, tokens)
   const L = await read($, limit)
   const ctx = Math.min(100, Math.round((used / L) * 100))
   const rl = await read($, limits)
   const subs = await read($, agents)
   const pars = (await read($, parallels)).map(p => ({ name: p.name, ...parse(p.md, s) }))
-  return { s, md, used, L, ...parse(md, s), ctx, ctxColor: fillColor(ctx), h5: rl.find(x => x.kind === 'five_hour'), d7: rl.find(x => x.kind === 'seven_day'), pars, subs }
+  return { s, lateral, md, used, L, ...parse(md, s), ctx, ctxColor: fillColor(ctx), h5: rl.find(x => x.kind === 'five_hour'), d7: rl.find(x => x.kind === 'seven_day'), pars, subs }
 }
 // Colours: the more is used the worse (context, usage); the more is done the better (progress).
 const fillColor = (p: number) => (p >= 90 ? 'red' : p >= 70 ? 'yellow' : 'green')
@@ -265,6 +285,7 @@ export const register: Register = on => {
 
   // After each turn: update the numbers and, past the limit, ask for the handoff.
   on('session.measure', async ($, e, next) => {
+    await ensureInit($)
     const used = e.context.tokens ?? 0
     const L = await read($, limit)
     await update($, tokens, () => used)
@@ -294,6 +315,7 @@ export const register: Register = on => {
     return r
   })
   on('turn.complete', async ($, e, next) => {
+    await ensureInit($)
     const r = await next(e)
     await refreshAgents($)
     await refreshLimits($)
@@ -326,7 +348,7 @@ export const register: Register = on => {
 
   // Band above the box where you type.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || (await read($, hidden)) || (await read($, sitio)) === 'lateral') return next(e)
+    if (e.props.hasSurvey || (await read($, hidden)) || (await view($)).lateral) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const { s, md, pct, sesPct, ctx, ctxColor, h5, d7, subs } = await datos($)
     // ponytail: one line only; usage details, task descriptions, parallel sessions and "Left" lists live in the side pane (/whatnow side).

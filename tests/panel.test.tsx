@@ -267,3 +267,16 @@ test('al acabar un turno haiku actualiza PROGRESS.md; si borra una tarea existen
   await wait()
   expect(written.length).toBe(0)
 })
+
+test('tras un /clear (sin session.start) el panel se rellena solo: etiquetas traducidas, no nombres internos', async ($, on) => {
+  on('command.register', () => ({ value: { command: 'whatnow' } }))
+  on('fs.read', (_, e: any) => (/lang[\\/]\w+\.json$/.test(e.path) ? readFile(_, e) : { value: MD }) as never)
+  on('settings.read', () => LANG('es'))
+  on('fs.list', () => ({ value: [] }) as never)
+  on('store.get', () => ({ value: undefined }) as never)
+  on('store.set', () => ({ value: undefined }) as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const all = (await pane.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  expect(all).toContain('USO 5 HORAS')
+  expect(all).not.toContain('USAGE5H')
+})

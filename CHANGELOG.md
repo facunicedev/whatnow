@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.3.3]
+- After `/clear` the side pane no longer shows internal label names (`USAGE5H`…) or a second band above the prompt: the panel refills its language and position by itself.
+
 ## [0.3.2]
 - Haiku also ticks leftover items that the rest of `PROGRESS.md` already shows as done.
 
