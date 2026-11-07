@@ -115,9 +115,9 @@ async function syncProgress($: EngineInterface, answer: string) {
       prompt: `Below is a PROGRESS.md, your previous notes (may be empty) and the assistant's recent messages of the work session (oldest first, the last one is the newest). Write your notes for the file, true now. Reply with ONLY these lines, no headings, no comments, no code fence:
 1. "${task} " plus one sentence with what this session is doing now.
 2. One line "- [x] <text>" for each step of this session's list (the section "## ${s.sessionHeading ?? 'This session'} [${mark}]") that the messages show is done, or that a later message replaced or cancelled. Copy the step text EXACTLY. Keep the ones of your previous notes that are still true.
-3. One line "- [ ] <text>" for a new step of this session only if something is still missing that no existing step covers: read the existing steps first and never repeat one in other words.
+3. One line "- [ ] <text>" for a new step of this session only if something is still missing that no existing step covers: read the existing steps first and never repeat one in other words. Write new steps small and single-action (one thing each, never "A and B"), so each can be ticked on its own.
 Ignore the project list: it is not yours.
-Tick only when the messages really say so; if unsure, leave it out. Write in the language of the file.
+Tick when the messages say the work was done, fixed or changed (a code change reported as done counts), even if it was not tested yet; if a step is only partly done, leave it unticked. A step of your previous notes that mixes several things and is partly done: tick nothing for it, but you may add the remaining part as a new small step. Write in the language of the file.
 
 --- PROGRESS.md ---
 ${md}

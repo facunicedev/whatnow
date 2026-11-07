@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.3.8]
+- Haiku ticks steps when the work is reported done (even if untested), writes small single-action steps, and no longer leaves the session bar stuck at 0%.
+
 ## [0.3.7]
 - Side panel: the "Parallel sessions" section sits below the whole section of this session (main session and its subagents) and lists only the other open sessions, each with its name, working/waiting, one sentence, bar and what is left. The list of open sessions that repeated this one is gone.
 - `claude -w` sessions now read and write the single `PROGRESS.md` of the main folder (in their own section) instead of one in their copy.
