@@ -5,14 +5,15 @@ import type { Sitio, Dict, Limite, Paralela, Agente, Abierta } from '../types'
 const DEFAULT_LIMIT = 150_000 // 150k of context = 100%, change with /whatnow limit <n>k
 const PROGRESS = 'PROGRESS.md' // at the project root (folder where claude was started)
 const HANDOFF = '.claude/HANDOFF.md'
-const HAIKU = '.claude/haiku-changes.md' // what haiku ticked or added, waiting for the session's model to confirm or refute it
 const P = 'whatnow'
 
 // Project root, fixed when the session opens: if the working folder changes (a cd), PROGRESS and handoff are not lost.
 let root = ''
 let live: string[] = [] // marks of the sessions open now; empty = not every one could be read, so nothing may be deleted
 let me = '' // this session's id once found (see findMe); '' until then
-const at = (f: string) => (root ? `${root}/${f}` : f)
+// A session started with claude -w works in .claude/worktrees/<name>, but PROGRESS.md is one for the whole project: it lives in the main folder.
+const mainOf = (p: string) => p.replace(/[\\/]\.claude[\\/]worktrees[\\/][^\\/]+$/, '')
+const at = (f: string) => (root ? `${f === PROGRESS ? mainOf(root) : root}/${f}` : f)
 
 const tokens = atom({ plugin: 'whatnow', key: 'tokens' } as const, 0, { shape: 'tokens-1' })
 const progress = atom({ plugin: 'whatnow', key: 'progress' } as const, '', { shape: 'progress-1' })
@@ -85,12 +86,14 @@ async function translateProgress($: EngineInterface, code: string, s: Dict) {
   $.ui.toast(t(s, 'translated'))
 }
 
-// After each main-loop turn: haiku brings PROGRESS.md up to date (task line, ticks, new pending items). No conversation turn.
-// ponytail: only runs on the main loop, one at a time; the file is written only if no existing task line was lost or reworded.
-// Haiku can be wrong, so every tick and every new item it makes is logged in HAIKU; the session's own model reviews that log at /whatnow progress and at every handoff.
+// After each main-loop turn: haiku writes ITS OWN section "## Haiku [mark]" in PROGRESS.md, and only about this session (task line, steps it thinks are done, new steps). No conversation turn.
+// It never touches the rest of the file; the panel counts its ticks and new steps in the SESSION bar. The project part is updated only by the session's model at the handoff, which also merges (or drops) what haiku left and deletes the section.
+// ponytail: only runs on the main loop, one at a time; only lines of the expected shapes are kept, a tick must copy an existing step exactly.
 let syncing = false
 let recent: string[] = [] // the last answers of this conversation, oldest first: a task finished two turns ago still gets ticked
-const states = (x: string) => new Map([...x.matchAll(/^\s*- \[([ xX])\] (.+)$/gm)].map(y => [y[2].trim(), y[1] !== ' '] as const))
+const HAIKU_HEAD = 'Haiku'
+const sectionRe = (heads: string) => new RegExp(`^#{2,}[ \\t]*(?:${heads})[^\\n]*\\n?([\\s\\S]*?)(?=^#{1,6}[ \\t]|$(?![\\s\\S]))`, 'gim')
+const ownHaiku = (md: string) => [...md.matchAll(sectionRe(HAIKU_HEAD))].find(m => m[0].split('\n')[0].includes(`[${mark}]`))
 async function syncProgress($: EngineInterface, answer: string) {
   if (syncing || !answer.trim()) return
   recent = [...recent, answer.slice(0, 3000)].slice(-4)
@@ -98,35 +101,49 @@ async function syncProgress($: EngineInterface, answer: string) {
   try {
     const md = await $.fs.read(at(PROGRESS)).catch(() => '')
     if (typeof md !== 'string' || !md.trim()) return
+    const s = await read($, strings)
+    const task = s.taskLabel ?? 'Task:'
     const tasks = (x: string) => [...x.matchAll(/^\s*- \[[ xX]\] (.+)$/gm)].map(y => y[1].trim())
-    const session = `${(await read($, strings)).sessionHeading ?? 'This session'} `
+    const mine = ownHaiku(md)
+    const heads = [...SESSION_HEADINGS, s.sessionHeading].filter(Boolean).join('|')
+    const secs = [...md.matchAll(sectionRe(heads))]
+    const sec = secs.find(m => m[0].split('\n')[0].includes(`[${mark}]`)) ?? secs.find(m => !/\[whatnow-/.test(m[0].split('\n')[0]))
+    const steps = new Set(sec ? tasks(sec[1]) : []) // the steps of this session's own list
+    const before = new Set(mine ? tasks(mine[1]) : []) // steps haiku itself proposed earlier
     const r = await $.model.complete({
-      model: 'haiku', effort: 'low', maxTokens: 4000, timeoutMs: 60_000,
-      prompt: `Below is a PROGRESS.md and the assistant's recent messages of the work session (oldest first, the last one is the newest). Update the file so it is true now: tick "- [x]" every task that those messages show is done, and every leftover task that the rest of the file already shows as done (e.g. a leftover "start phase 0" item when phase 0 is ticked elsewhere) or that a later message clearly replaced or cancelled. Add a new "- [ ] " task only for something still missing that no existing task already covers: read the existing tasks first and never repeat one in other words. Rewrite two lines so they are true now: the one-line project status (the line after the title, starting with its label) and the one-sentence task line of THIS session's own section, whose heading is "## ${session}[${mark}]" (if that section does not exist, create it at the end with that exact heading, a task line and no steps). Other sections with another mark in brackets belong to other sessions: leave them exactly as they are. Tick only when the messages really say so; if unsure, leave it unticked. Never delete, reword or reorder existing task lines (only tick them), keep headings, labels, language and every other line exactly. If nothing changed, reply with the file unchanged. Reply with the file only, no comments, no code fence.
+      model: 'haiku', effort: 'low', maxTokens: 1500, timeoutMs: 60_000,
+      prompt: `Below is a PROGRESS.md, your previous notes (may be empty) and the assistant's recent messages of the work session (oldest first, the last one is the newest). Write your notes for the file, true now. Reply with ONLY these lines, no headings, no comments, no code fence:
+1. "${task} " plus one sentence with what this session is doing now.
+2. One line "- [x] <text>" for each step of this session's list (the section "## ${s.sessionHeading ?? 'This session'} [${mark}]") that the messages show is done, or that a later message replaced or cancelled. Copy the step text EXACTLY. Keep the ones of your previous notes that are still true.
+3. One line "- [ ] <text>" for a new step of this session only if something is still missing that no existing step covers: read the existing steps first and never repeat one in other words.
+Ignore the project list: it is not yours.
+Tick only when the messages really say so; if unsure, leave it out. Write in the language of the file.
 
 --- PROGRESS.md ---
 ${md}
+
+--- YOUR PREVIOUS NOTES ---
+${mine ? mine[1].trim() : ''}
 
 --- RECENT MESSAGES ---
 ${recent.map((m, i) => `[${i + 1}] ${m}`).join('\n\n')}`,
     })
     const out = r.isAnswered ? r.text.replace(/^```\w*\n|\n```\s*$/g, '').trim() : ''
-    const now = new Set(tasks(out))
-    if (!out || out === md.trim() || !tasks(md).every(x => now.has(x))) return
-    await $.fs.write(at(PROGRESS), out + '\n')
-    await update($, progress, () => out)
-    // What haiku changed, for the session's model to confirm or refute later.
-    const before = states(md)
-    const after = states(out)
-    const lines = [
-      ...[...after].filter(([k, v]) => v && before.get(k) === false).map(([k]) => `- ticked: ${k}`),
-      ...[...after.keys()].filter(k => !before.has(k)).map(k => `- added: ${k}`),
-    ]
-    if (lines.length) {
-      const old = await $.fs.read(at(HAIKU)).catch(() => '')
-      const keep = (typeof old === 'string' ? old : '').split('\n').filter(l => l.startsWith('- ')).slice(-80)
-      await $.fs.write(at(HAIKU), `# Changes made automatically by haiku to PROGRESS.md, not reviewed yet\n${[...keep, ...lines].join('\n')}\n`)
-    }
+    const startsWith = (l: string, labels: string[]) => labels.some(x => l.toLowerCase().startsWith(x.toLowerCase()))
+    const seen = new Set<string>()
+    const lines = out.split('\n').map(l => l.trim()).filter(l => {
+      const m = l.match(/^- \[([ xX])\] (.+)$/)
+      if (m) return !seen.has(m[2].trim()) && !!seen.add(m[2].trim()) && (m[1] === ' ' ? !steps.has(m[2].trim()) : steps.has(m[2].trim()) || before.has(m[2].trim()))
+      return startsWith(l, [...TASK_LABELS, task]) && !seen.has(l.slice(0, 4).toLowerCase()) && !!seen.add(l.slice(0, 4).toLowerCase())
+    }).slice(0, 60)
+    if (!lines.length) return
+    const section = `## ${HAIKU_HEAD} [${mark}]\n${lines.join('\n')}\n`
+    const now = await $.fs.read(at(PROGRESS)).catch(() => '') // read again right before writing: only this section is replaced
+    if (typeof now !== 'string' || !now.trim()) return
+    const old = ownHaiku(now)
+    const next = old ? now.replace(old[0], () => section) : `${now.replace(/\s*$/, '')}\n\n${section}`
+    if (next === now) return
+    await $.fs.write(at(PROGRESS), next)
     await refresh($)
   } catch { /* a failed sync just leaves the file as it was */ } finally { syncing = false }
 }
@@ -138,33 +155,39 @@ async function refreshLimits($: EngineInterface) {
     if (u.rateLimits?.length) await update($, limits, () => u.rateLimits)
   } catch { /* no usage figures yet */ }
 }
-const handoffPrompt = (s: Dict, why: string) => t(s, 'handoffPrompt', { why, handoff: at(HANDOFF), progress: at(PROGRESS), haiku: at(HAIKU), mark, live: live.join(', ') })
+const handoffPrompt = (s: Dict, why: string) => t(s, 'handoffPrompt', { why, handoff: at(HANDOFF), progress: at(PROGRESS), mark, live: live.join(', ') })
 const openPane = ($: EngineInterface, s: Dict) => $.ui.open({ id: P, title: t(s, 'paneTitle') })
 
-// Each session writes its own section "## This session [whatnow-xxxx]" (the mark of its process); everything outside those sections is the project.
-// Reads one PROGRESS.md: project part, the section whose heading carries `key`, status and the one-sentence task.
+// Each session writes its own section "## This session [whatnow-xxxx]" and haiku its own "## Haiku [whatnow-xxxx]"; everything outside those sections is the project.
+// The panel counts what haiku ticked (an existing step copied exactly) and the new steps it proposes in the SESSION list only; the project part is the model's.
+// Reads one PROGRESS.md: project part, the section of the session with this key, status and the one-sentence task.
 // ponytail: a legacy section with no mark is shown to every session until the model rewrites it with one.
 function parse(md: string, s: Dict, key = '') {
-  const alts = (key: string, known: string[]) => [...new Set([...known, s[key]].filter(Boolean))]
+  const alts = (k: string, known: string[]) => [...new Set([...known, s[k]].filter(Boolean))]
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const label = (text: string, labels: string[]) =>
     labels.map(l => text.split('\n').find(x => x.toLowerCase().startsWith(l.toLowerCase()))?.slice(l.length).trim()).find(Boolean) ?? ''
-  const status = label(md, alts('statusLabel', STATUS_LABELS))
-  // A session section runs to the next heading (or the end).
-  const headings = alts('sessionHeading', SESSION_HEADINGS).map(esc).join('|')
-  const all = [...md.matchAll(new RegExp(`^#{2,}[ \\t]*(?:${headings})[^\\n]*\\n?([\\s\\S]*?)(?=^#{1,6}[ \\t]|$(?![\\s\\S]))`, 'gim'))]
   const head = (m: RegExpMatchArray) => m[0].split('\n')[0]
+  const all = [...md.matchAll(sectionRe(alts('sessionHeading', SESSION_HEADINGS).map(esc).join('|')))]
+  const hk = [...md.matchAll(sectionRe(HAIKU_HEAD))]
   const sec = all.find(m => !!key && head(m).includes(`[${key}]`)) ?? all.find(m => !/\[whatnow-/.test(head(m)))
-  const count = (x: string) => {
-    const tasks = [...x.matchAll(/^\s*- \[([ xX])\] (.+)$/gm)]
-    const done = tasks.filter(y => y[1] !== ' ').length
-    return { n: tasks.length, todo: tasks.filter(y => y[1] === ' ').map(y => y[2]), pct: tasks.length ? Math.round((done / tasks.length) * 100) : 0 }
+  const hmine = hk.find(m => !!key && head(m).includes(`[${key}]`))
+  const rest = [...all, ...hk].reduce((x, m) => x.replace(m[0], ''), md)
+  const lines = (x: string, box: string) => [...x.matchAll(new RegExp(`^\\s*- \\[${box}\\] (.+)$`, 'gm'))].map(y => y[1].trim())
+  const ticks = new Set(hmine ? lines(hmine[1], '[xX]') : []) // haiku only speaks about its own session
+  const fresh = hmine ? [...new Set(lines(hmine[1], ' '))].filter(x => !ticks.has(x)) : []
+  const count = (x: string, extra: string[] = [], ticked = new Set<string>()) => {
+    const tasks = [...lines(x, '[ xX]'), ...extra.filter(e => !lines(x, '[ xX]').includes(e))]
+    const done = (t: string) => ticked.has(t) || lines(x, '[xX]').includes(t)
+    const todo = tasks.filter(t => !done(t))
+    return { n: tasks.length, todo, pct: tasks.length ? Math.round(((tasks.length - todo.length) / tasks.length) * 100) : 0 }
   }
-  const { todo, pct } = count(all.reduce((x, m) => x.replace(m[0], ''), md))
-  const ses = count(sec ? sec[1] : '')
+  const { todo, pct } = count(rest)
+  const ses = count(sec ? sec[1] : '', fresh, ticks)
   return {
-    status, todo, pct,
-    task: sec ? label(sec[1], alts('taskLabel', TASK_LABELS)) : '',
+    status: label(rest, alts('statusLabel', STATUS_LABELS)),
+    todo, pct,
+    task: (hmine && label(hmine[1], alts('taskLabel', TASK_LABELS))) || (sec ? label(sec[1], alts('taskLabel', TASK_LABELS)) : ''),
     sesPct: ses.n ? ses.pct : undefined, // undefined = no session list yet
     sesTodo: ses.todo,
   }
@@ -200,7 +223,7 @@ async function datos($: EngineInterface) {
   const rl = await read($, limits)
   const subs = await read($, agents)
   const open = await read($, peers)
-  const pars = (await read($, parallels)).map(p => ({ name: p.name, ...parse(p.md, s, p.mark) }))
+  const pars = (await read($, parallels)).map(p => ({ ...parse(p.md, s, p.mark), name: p.name, state: p.status, doing: p.doing }))
   return { s, lateral, md, used, L, ...parse(md, s, mark), ctx, ctxColor: fillColor(ctx), h5: rl.find(x => x.kind === 'five_hour'), d7: rl.find(x => x.kind === 'seven_day'), pars, subs, open }
 }
 // Colours: the more is used the worse (context, usage); the more is done the better (progress).
@@ -222,7 +245,7 @@ async function refreshAgents($: EngineInterface) {
 const flat = (p: string) => p.replace(/\\/g, '/').replace(/\/$/, '')
 async function openSessions($: EngineInterface) {
   const home = flat($.plugin.root).split('/plugins/')[0]
-  const proj = flat(root.replace(/[\\/]\.claude[\\/]worktrees[\\/][^\\/]+$/, '')).toLowerCase() // a claude -w session still belongs to the main project
+  const proj = flat(mainOf(root)).toLowerCase() // a claude -w session still belongs to the main project
   const list: { id: string; cwd: string; name: string; status: string }[] = []
   for (const f of (await $.fs.list(`${home}/sessions`).catch(() => [])).filter(f => f.name.endsWith('.json'))) {
     try {
@@ -308,17 +331,21 @@ async function refreshOpen($: EngineInterface) {
   // Progress of the other sessions: the section of each one (found by its mark) in the PROGRESS.md of its own folder; sessions in the same folder share the file, not the section.
   const pars: Paralela[] = []
   const marks = [mark]
-  for (const p of list) {
-    const md = await $.fs.read(`${p.cwd}/${PROGRESS}`).catch(() => '')
+  const got = await Promise.all(list.map(async p => ({ p, pm: p.id === me ? mark : await markOf($, home, p) })))
+  // Before its first message a session has no mark in its transcript yet, so it cannot be told apart from itself. If exactly one session of my own folder is in that state, it is this one.
+  const mine = me || (got.filter(g => !g.pm && flat(g.p.cwd).toLowerCase() === flat(root).toLowerCase()).length === 1 ? got.find(g => !g.pm && flat(g.p.cwd).toLowerCase() === flat(root).toLowerCase())!.p.id : '')
+  for (const { p, pm } of got) {
+    const md = await $.fs.read(`${mainOf(p.cwd)}/${PROGRESS}`).catch(() => '')
     const text = typeof md === 'string' ? md.replace(/\r\n/g, '\n') : ''
-    const pm = p.id === me ? mark : await markOf($, home, p)
     void nameSession($, home, p, text.trim() ? parse(text, s, pm).task : '')
-    if (p.id !== me && pm !== mark) marks.push(pm)
-    if (p.id === me || pm === mark || !text.trim()) continue
-    pars.push({ name: named.get(p.id)?.label || p.name, md: text, mark: pm })
+    if (p.id !== mine && pm !== mark) marks.push(pm)
+    // a session of my own folder without a mark may be this very one (or an old version): never shown as parallel
+    const unknown = !pm && flat(p.cwd).toLowerCase() === flat(root).toLowerCase()
+    if (p.id === mine || pm === mark || (unknown && !mine)) continue // unknown and no way to tell who is who: better to hide than to show this very session as another
+    pars.push({ name: named.get(p.id)?.label || p.name, md: text, mark: pm, status: p.status, doing: named.get(p.id)?.doing })
   }
   live = marks.every(Boolean) ? marks : []
-  const open: Abierta[] = list.map(p => ({ name: named.get(p.id)?.label || p.name, status: p.status, self: !!me && p.id === me, doing: named.get(p.id)?.doing })).sort((a, b) => Number(b.self) - Number(a.self) || a.name.localeCompare(b.name))
+  const open: Abierta[] = list.map(p => ({ name: named.get(p.id)?.label || p.name, status: p.status, self: !!mine && p.id === mine, doing: named.get(p.id)?.doing })).sort((a, b) => Number(b.self) - Number(a.self) || a.name.localeCompare(b.name))
   if (JSON.stringify(open) !== JSON.stringify(await read($, peers))) await update($, peers, () => open)
   if (JSON.stringify(pars) !== JSON.stringify(await read($, parallels))) await update($, parallels, () => pars) // a closed session drops out of the panel by itself
 }
@@ -381,7 +408,7 @@ export const register: Register = on => {
       return { text: t(s, 'limitSet', { n: n / 1000 }) }
     }
     if (/^progres/.test(word)) {
-      void $.prompt.submit({ text: t(s, 'progressNow', { progress: at(PROGRESS), haiku: at(HAIKU), mark }), asUser: true }).catch(err => $.ui.toast(t(s, 'progressFail', { err: String(err) })))
+      void $.prompt.submit({ text: t(s, 'progressNow', { progress: at(PROGRESS), mark }), asUser: true }).catch(err => $.ui.toast(t(s, 'progressFail', { err: String(err) })))
       return { text: t(s, 'progressAsk', { file: PROGRESS }) }
     }
     if (/^(traspas|handoff)/.test(word)) {
@@ -548,27 +575,36 @@ export const register: Register = on => {
           {col(t(s, 'usage5h'), h5)}
           {col(t(s, 'usage7d'), d7)}
         </Box>
-        {open.length > 1 ? (
-          <Box flexDirection="column">
-            {head(`${t(s, 'peers')} (${open.length})`)}
-            {list(open.map(p => `${p.name} · ${open.some(x => x.self) ? `${t(s, p.self ? 'here' : 'parallelWord')} · ` : ''}${t(s, p.status === 'busy' ? 'busy' : 'idle')}${p.doing ? `\n  ${p.doing}` : ''}`))}
-          </Box>
-        ) : null}
         {md ? (
           <>
             {block(t(s, 'mainSession'), sesPct, task, sesTodo)}
-            {pars.map((p, i) => <Box key={i}flexDirection="column">{block(`${t(s, 'parallel')}: ${p.name}`, p.sesPct, p.task, p.sesTodo)}</Box>)}
             {subs.length ? (
               <Box flexDirection="column">
                 {head(`${t(s, 'agents')} (${subs.length})`)}
                 {list(subs.map(a => `${a.name && a.name !== a.text ? `${a.name}: ` : ''}${a.text} (${a.type})`))}
               </Box>
             ) : null}
-            {block(t(s, 'project'), pct, status, todo)}
           </>
         ) : (
           <Text dimColor>{t(s, 'noFilePane', { file: PROGRESS })}</Text>
         )}
+        {/* The other open sessions, below the whole section of this one (this one is never repeated here). */}
+        {pars.length ? (
+          <Box flexDirection="column">
+            {head(`${t(s, 'parallels')} (${pars.length})`)}
+            {pars.map((p, i) => (
+              <Box key={i} flexDirection="column">
+                <Text> </Text>
+                <Text bold>{cap(p.name)} · {t(s, p.state === 'busy' ? 'busy' : 'idle')}</Text>
+                {p.doing || p.task ? <Text>{cap(p.doing || p.task)}</Text> : null}
+                {p.sesPct === undefined ? <Text dimColor>{t(s, 'noList')}</Text> : <Text color={doneColor(p.sesPct)}>{bar(p.sesPct, w)} {p.sesPct}%</Text>}
+                <Text bold dimColor>{cap(t(s, 'left'))} ({p.sesTodo.length}):</Text>
+                {list(p.sesTodo)}
+              </Box>
+            ))}
+          </Box>
+        ) : null}
+        {md ? block(t(s, 'project'), pct, status, todo) : null}
       </Box>
     )
   })

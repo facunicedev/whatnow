@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.3.7]
+- Side panel: the "Parallel sessions" section sits below the whole section of this session (main session and its subagents) and lists only the other open sessions, each with its name, working/waiting, one sentence, bar and what is left. The list of open sessions that repeated this one is gone.
+- `claude -w` sessions now read and write the single `PROGRESS.md` of the main folder (in their own section) instead of one in their copy.
+- At the handoff, before deleting the section of a closed session, the model reads it and moves into the project list what it left done or pending.
+- A session that has just opened (no mark in its conversation yet) no longer sees itself as a parallel session.
+- Haiku now writes only in its own section `## Haiku [mark]` of `PROGRESS.md`, and only about its session (task line, steps it thinks are done, new steps); the panel counts them in the session bar. The project part is updated only by the session's model at the handoff, which merges what Haiku left and deletes every Haiku section. `.claude/haiku-changes.md` is gone.
+
 ## [0.3.6]
 - Every session writes its own section in `PROGRESS.md` (`## This session [mark]`, the mark is the one the mod leaves in the conversation) and reads only that one. Two sessions in the same folder no longer share a task list; Haiku creates the section if it is missing. Fixes "no list / Left (0)" after a handoff.
 - At each handoff the session removes the sections of sessions that are no longer open (the mod gives it the list of open ones; if it cannot read them all, nothing is deleted).
