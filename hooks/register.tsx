@@ -10,6 +10,7 @@ const P = 'whatnow'
 
 // Project root, fixed when the session opens: if the working folder changes (a cd), PROGRESS and handoff are not lost.
 let root = ''
+let live: string[] = [] // marks of the sessions open now; empty = not every one could be read, so nothing may be deleted
 let me = '' // this session's id once found (see findMe); '' until then
 const at = (f: string) => (root ? `${root}/${f}` : f)
 
@@ -98,9 +99,10 @@ async function syncProgress($: EngineInterface, answer: string) {
     const md = await $.fs.read(at(PROGRESS)).catch(() => '')
     if (typeof md !== 'string' || !md.trim()) return
     const tasks = (x: string) => [...x.matchAll(/^\s*- \[[ xX]\] (.+)$/gm)].map(y => y[1].trim())
+    const session = `${(await read($, strings)).sessionHeading ?? 'This session'} `
     const r = await $.model.complete({
       model: 'haiku', effort: 'low', maxTokens: 4000, timeoutMs: 60_000,
-      prompt: `Below is a PROGRESS.md and the assistant's recent messages of the work session (oldest first, the last one is the newest). Update the file so it is true now: tick "- [x]" every task that those messages show is done, and every leftover task that the rest of the file already shows as done (e.g. a leftover "start phase 0" item when phase 0 is ticked elsewhere) or that a later message clearly replaced or cancelled. Add a new "- [ ] " task only for something still missing that no existing task already covers: read the existing tasks first and never repeat one in other words. Rewrite two lines so they are true now: the one-line project status (the line after the title, starting with its label) and the one-sentence task line of the session section. Tick only when the messages really say so; if unsure, leave it unticked. Never delete, reword or reorder existing task lines (only tick them), keep headings, labels, language and every other line exactly. If nothing changed, reply with the file unchanged. Reply with the file only, no comments, no code fence.
+      prompt: `Below is a PROGRESS.md and the assistant's recent messages of the work session (oldest first, the last one is the newest). Update the file so it is true now: tick "- [x]" every task that those messages show is done, and every leftover task that the rest of the file already shows as done (e.g. a leftover "start phase 0" item when phase 0 is ticked elsewhere) or that a later message clearly replaced or cancelled. Add a new "- [ ] " task only for something still missing that no existing task already covers: read the existing tasks first and never repeat one in other words. Rewrite two lines so they are true now: the one-line project status (the line after the title, starting with its label) and the one-sentence task line of THIS session's own section, whose heading is "## ${session}[${mark}]" (if that section does not exist, create it at the end with that exact heading, a task line and no steps). Other sections with another mark in brackets belong to other sessions: leave them exactly as they are. Tick only when the messages really say so; if unsure, leave it unticked. Never delete, reword or reorder existing task lines (only tick them), keep headings, labels, language and every other line exactly. If nothing changed, reply with the file unchanged. Reply with the file only, no comments, no code fence.
 
 --- PROGRESS.md ---
 ${md}
@@ -136,25 +138,29 @@ async function refreshLimits($: EngineInterface) {
     if (u.rateLimits?.length) await update($, limits, () => u.rateLimits)
   } catch { /* no usage figures yet */ }
 }
-const handoffPrompt = (s: Dict, why: string) => t(s, 'handoffPrompt', { why, handoff: at(HANDOFF), progress: at(PROGRESS), haiku: at(HAIKU) })
+const handoffPrompt = (s: Dict, why: string) => t(s, 'handoffPrompt', { why, handoff: at(HANDOFF), progress: at(PROGRESS), haiku: at(HAIKU), mark, live: live.join(', ') })
 const openPane = ($: EngineInterface, s: Dict) => $.ui.open({ id: P, title: t(s, 'paneTitle') })
 
-// Reads one PROGRESS.md: project part, session part, status and the one-sentence task of the session.
-function parse(md: string, s: Dict) {
+// Each session writes its own section "## This session [whatnow-xxxx]" (the mark of its process); everything outside those sections is the project.
+// Reads one PROGRESS.md: project part, the section whose heading carries `key`, status and the one-sentence task.
+// ponytail: a legacy section with no mark is shown to every session until the model rewrites it with one.
+function parse(md: string, s: Dict, key = '') {
   const alts = (key: string, known: string[]) => [...new Set([...known, s[key]].filter(Boolean))]
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const label = (text: string, labels: string[]) =>
     labels.map(l => text.split('\n').find(x => x.toLowerCase().startsWith(l.toLowerCase()))?.slice(l.length).trim()).find(Boolean) ?? ''
   const status = label(md, alts('statusLabel', STATUS_LABELS))
-  // The session section runs to the next heading (or the end); the rest is the project.
+  // A session section runs to the next heading (or the end).
   const headings = alts('sessionHeading', SESSION_HEADINGS).map(esc).join('|')
-  const sec = md.match(new RegExp(`^#{2,}[ \\t]*(?:${headings})[^\\n]*\\n?([\\s\\S]*?)(?=^#{1,6}[ \\t]|$(?![\\s\\S]))`, 'im'))
+  const all = [...md.matchAll(new RegExp(`^#{2,}[ \\t]*(?:${headings})[^\\n]*\\n?([\\s\\S]*?)(?=^#{1,6}[ \\t]|$(?![\\s\\S]))`, 'gim'))]
+  const head = (m: RegExpMatchArray) => m[0].split('\n')[0]
+  const sec = all.find(m => !!key && head(m).includes(`[${key}]`)) ?? all.find(m => !/\[whatnow-/.test(head(m)))
   const count = (x: string) => {
     const tasks = [...x.matchAll(/^\s*- \[([ xX])\] (.+)$/gm)]
     const done = tasks.filter(y => y[1] !== ' ').length
     return { n: tasks.length, todo: tasks.filter(y => y[1] === ' ').map(y => y[2]), pct: tasks.length ? Math.round((done / tasks.length) * 100) : 0 }
   }
-  const { todo, pct } = count(sec ? md.replace(sec[0], '') : md)
+  const { todo, pct } = count(all.reduce((x, m) => x.replace(m[0], ''), md))
   const ses = count(sec ? sec[1] : '')
   return {
     status, todo, pct,
@@ -194,8 +200,8 @@ async function datos($: EngineInterface) {
   const rl = await read($, limits)
   const subs = await read($, agents)
   const open = await read($, peers)
-  const pars = (await read($, parallels)).map(p => ({ name: p.name, ...parse(p.md, s) }))
-  return { s, lateral, md, used, L, ...parse(md, s), ctx, ctxColor: fillColor(ctx), h5: rl.find(x => x.kind === 'five_hour'), d7: rl.find(x => x.kind === 'seven_day'), pars, subs, open }
+  const pars = (await read($, parallels)).map(p => ({ name: p.name, ...parse(p.md, s, p.mark) }))
+  return { s, lateral, md, used, L, ...parse(md, s, mark), ctx, ctxColor: fillColor(ctx), h5: rl.find(x => x.kind === 'five_hour'), d7: rl.find(x => x.kind === 'seven_day'), pars, subs, open }
 }
 // Colours: the more is used the worse (context, usage); the more is done the better (progress).
 const fillColor = (p: number) => (p >= 90 ? 'red' : p >= 70 ? 'yellow' : 'green')
@@ -207,7 +213,7 @@ let warned = false // ponytail: one warning per session; re-armed when the conte
 // Subagents running now, from the engine's own list; written only when it changed so the panel does not redraw for nothing.
 async function refreshAgents($: EngineInterface) {
   const all = await $.agent.list().catch(() => [])
-  const live: Agente[] = all.filter(a => ['pending', 'running', 'waiting'].includes(a.status)).map(a => ({ id: a.id, text: a.description || a.name || a.type, type: a.type }))
+  const live: Agente[] = all.filter(a => ['pending', 'running', 'waiting'].includes(a.status)).map(a => ({ id: a.id, text: a.description || a.name || a.type, type: a.type, name: a.name }))
   if (JSON.stringify(live) !== JSON.stringify(await read($, agents))) await update($, agents, () => live)
 }
 
@@ -244,22 +250,76 @@ async function findMe($: EngineInterface, home: string, list: { id: string; cwd:
   }
 }
 
+// The mark of another session, read from its transcript (the block the mod added is `\n(whatnow-xxxxxxxx)`). Remembered once found.
+// ponytail: whole-file read, at most 5 tries per session id.
+const peerMarks = new Map<string, string>()
+const peerTries = new Map<string, number>()
+async function markOf($: EngineInterface, home: string, p: { id: string; cwd: string }) {
+  if (peerMarks.has(p.id) || (peerTries.get(p.id) ?? 0) >= 5) return peerMarks.get(p.id) ?? ''
+  peerTries.set(p.id, (peerTries.get(p.id) ?? 0) + 1)
+  const text = await $.fs.read(`${home}/projects/${p.cwd.replace(/[^a-zA-Z0-9]/g, '-')}/${p.id}.jsonl`).catch(() => '')
+  const m = typeof text === 'string' ? [...text.matchAll(/\\n\((whatnow-[a-z0-9]{8})\)/g)].pop() : undefined
+  if (m) peerMarks.set(p.id, m[1])
+  return m?.[1] ?? ''
+}
+
+// A short name and one sentence of what each open session is doing. The source is its PROGRESS.md task line, or its last message if there is none.
+// Haiku is asked only when that source changes (and never twice at once); a failure is remembered too, so it is not retried on every tool call.
+const named = new Map<string, { src: string; label: string; doing: string }>()
+const asking = new Set<string>()
+async function lastMessage($: EngineInterface, home: string, p: { id: string; cwd: string }) {
+  const text = await $.fs.read(`${home}/projects/${p.cwd.replace(/[^a-zA-Z0-9]/g, '-')}/${p.id}.jsonl`).catch(() => '')
+  if (typeof text !== 'string') return ''
+  const lines = text.slice(-300_000).split('\n') // only the tail of the transcript; a cut first line just fails to parse
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const x = JSON.parse(lines[i])
+      const c = x.message?.content
+      const s = x.type !== 'user' ? '' : typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b: { type: string }) => b.type === 'text').map((b: { text: string }) => b.text).join(' ') : ''
+      if (s.trim() && !s.trim().startsWith('<')) return s.trim().slice(0, 400) // "<" = system text, not the person
+    } catch { /* not a message line */ }
+  }
+  return ''
+}
+async function nameSession($: EngineInterface, home: string, p: { id: string; cwd: string }, task: string) {
+  const src = task || (await lastMessage($, home, p))
+  if (!src || named.get(p.id)?.src === src || asking.has(p.id)) return
+  asking.add(p.id)
+  let entry = { src, label: '', doing: '' }
+  try {
+    const r = await $.model.complete({
+      model: 'haiku', effort: 'low', maxTokens: 200, timeoutMs: 30_000,
+      prompt: `The text below says what a work session is doing. Reply with exactly two lines. Line 1: a name of 2 or 3 words joined by hyphens, lowercase, no spaces. Line 2: one short sentence (at most 12 words) saying what the session is doing now. Use the language of the text. Nothing else.\n\n${src}`,
+    })
+    const [label = '', doing = ''] = r.isAnswered ? r.text.trim().split('\n').map(x => x.trim()) : []
+    if (label && doing) entry = { src, label: label.slice(0, 40), doing: doing.slice(0, 120) }
+  } catch { /* keep the empty entry */ }
+  named.set(p.id, entry)
+  asking.delete(p.id)
+  void refreshOpen($) // draw the new name; the source is the same now, so it does not ask again
+}
+
 // Perspective: this session sees itself as the main one and every other open session as parallel (a -w session sees the main one as parallel).
 async function refreshOpen($: EngineInterface) {
   if (!root) return
   const { home, list } = await openSessions($)
   await findMe($, home, list)
-  const open: Abierta[] = list.map(p => ({ name: p.name, status: p.status, self: !!me && p.id === me })).sort((a, b) => Number(b.self) - Number(a.self) || a.name.localeCompare(b.name))
-  if (JSON.stringify(open) !== JSON.stringify(await read($, peers))) await update($, peers, () => open)
-  // Progress of the other sessions: each one's own PROGRESS.md, in its own folder (sessions in the same folder share one file, so it counts once).
-  const seen = new Set([flat(root).toLowerCase()])
+  const s = await read($, strings)
+  // Progress of the other sessions: the section of each one (found by its mark) in the PROGRESS.md of its own folder; sessions in the same folder share the file, not the section.
   const pars: Paralela[] = []
+  const marks = [mark]
   for (const p of list) {
-    if (seen.has(p.cwd.toLowerCase())) continue
-    seen.add(p.cwd.toLowerCase())
     const md = await $.fs.read(`${p.cwd}/${PROGRESS}`).catch(() => '')
-    if (typeof md === 'string' && md.trim()) pars.push({ name: p.name, md: md.replace(/\r\n/g, '\n') })
+    const text = typeof md === 'string' ? md.replace(/\r\n/g, '\n') : ''
+    const pm = p.id === me ? mark : await markOf($, home, p)
+    void nameSession($, home, p, text.trim() ? parse(text, s, pm).task : '')
+    if (p.id !== me && pm !== mark) marks.push(pm)
+    if (p.id === me || pm === mark || !text.trim()) continue
+    pars.push({ name: named.get(p.id)?.label || p.name, md: text, mark: pm })
   }
+  live = marks.every(Boolean) ? marks : []
+  const open: Abierta[] = list.map(p => ({ name: named.get(p.id)?.label || p.name, status: p.status, self: !!me && p.id === me, doing: named.get(p.id)?.doing })).sort((a, b) => Number(b.self) - Number(a.self) || a.name.localeCompare(b.name))
+  if (JSON.stringify(open) !== JSON.stringify(await read($, peers))) await update($, peers, () => open)
   if (JSON.stringify(pars) !== JSON.stringify(await read($, parallels))) await update($, parallels, () => pars) // a closed session drops out of the panel by itself
 }
 
@@ -321,7 +381,7 @@ export const register: Register = on => {
       return { text: t(s, 'limitSet', { n: n / 1000 }) }
     }
     if (/^progres/.test(word)) {
-      void $.prompt.submit({ text: t(s, 'progressNow', { progress: at(PROGRESS), haiku: at(HAIKU) }), asUser: true }).catch(err => $.ui.toast(t(s, 'progressFail', { err: String(err) })))
+      void $.prompt.submit({ text: t(s, 'progressNow', { progress: at(PROGRESS), haiku: at(HAIKU), mark }), asUser: true }).catch(err => $.ui.toast(t(s, 'progressFail', { err: String(err) })))
       return { text: t(s, 'progressAsk', { file: PROGRESS }) }
     }
     if (/^(traspas|handoff)/.test(word)) {
@@ -395,7 +455,7 @@ export const register: Register = on => {
     const s = await read($, strings)
     recent = []
     me = ''; tries = 0 // a new conversation can be a new session id: look for it again
-    const blocks = [...r.blocks, { name: P, text: `${t(s, 'instructions', { progress: at(PROGRESS) })}
+    const blocks = [...r.blocks, { name: P, text: `${t(s, 'instructions', { progress: at(PROGRESS), mark })}
 (${mark})` }]
     const prev = await $.fs.read(at(HANDOFF)).catch(() => '')
     if (typeof prev === 'string' && prev.trim()) {
@@ -491,17 +551,17 @@ export const register: Register = on => {
         {open.length > 1 ? (
           <Box flexDirection="column">
             {head(`${t(s, 'peers')} (${open.length})`)}
-            {list(open.map(p => `${p.name} · ${open.some(x => x.self) ? `${t(s, p.self ? 'here' : 'parallelWord')} · ` : ''}${t(s, p.status === 'busy' ? 'busy' : 'idle')}`))}
+            {list(open.map(p => `${p.name} · ${open.some(x => x.self) ? `${t(s, p.self ? 'here' : 'parallelWord')} · ` : ''}${t(s, p.status === 'busy' ? 'busy' : 'idle')}${p.doing ? `\n  ${p.doing}` : ''}`))}
           </Box>
         ) : null}
         {md ? (
           <>
             {block(t(s, 'mainSession'), sesPct, task, sesTodo)}
-            {pars.map(p => <Box key={p.name} flexDirection="column">{block(`${t(s, 'parallel')}: ${p.name}`, p.sesPct, p.task, p.sesTodo)}</Box>)}
+            {pars.map((p, i) => <Box key={i}flexDirection="column">{block(`${t(s, 'parallel')}: ${p.name}`, p.sesPct, p.task, p.sesTodo)}</Box>)}
             {subs.length ? (
               <Box flexDirection="column">
                 {head(`${t(s, 'agents')} (${subs.length})`)}
-                {list(subs.map(a => `${a.text} (${a.type})`))}
+                {list(subs.map(a => `${a.name && a.name !== a.text ? `${a.name}: ` : ''}${a.text} (${a.type})`))}
               </Box>
             ) : null}
             {block(t(s, 'project'), pct, status, todo)}

@@ -2,9 +2,9 @@ export type ProgressText = string
 export type Sitio = 'banda' | 'lateral'
 export type Dict = Record<string, string>
 export type Limite = { kind: string; percentUsed: number; resetsAt?: string }
-export type Agente = { id: string; text: string; type: string }
-export type Abierta = { name: string; status: string; self: boolean }
-export type Paralela = { name: string; md: string }
+export type Agente = { id: string; text: string; type: string; name?: string }
+export type Abierta = { name: string; status: string; self: boolean; doing?: string }
+export type Paralela = { name: string; md: string; mark?: string }
 
 declare module 'claude-code' {
   interface PluginState {

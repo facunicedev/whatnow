@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.3.6]
+- Every session writes its own section in `PROGRESS.md` (`## This session [mark]`, the mark is the one the mod leaves in the conversation) and reads only that one. Two sessions in the same folder no longer share a task list; Haiku creates the section if it is missing. Fixes "no list / Left (0)" after a handoff.
+- At each handoff the session removes the sections of sessions that are no longer open (the mod gives it the list of open ones; if it cannot read them all, nothing is deleted).
+- Open sessions and subagents get a short name and one sentence of what they are doing (from their task line, or their last message if there is none).
+
 ## [0.3.5]
 - Open sessions are seen from each session's own point of view: it is "this one (main)" and every other session is "parallel". A session finds out which one it is by a mark it leaves in the conversation (Claude Code does not tell mods its session id). The progress of the other sessions is read from each one's own folder.
 - Haiku sees the last four messages instead of only the last one, ticks what is done or superseded, and does not repeat tasks. Everything it ticks or adds is logged in `.claude/haiku-changes.md`; at `/whatnow progress` and at every handoff the session's own model confirms or undoes those changes and empties the log.
