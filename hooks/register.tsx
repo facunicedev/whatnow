@@ -462,6 +462,9 @@ export const register: Register = on => {
 
   // Subagents start and stop between turns of the main loop, so look at every tool call (the ones inside a subagent too) and at the end of each turn.
   on('tool.call', async ($, e, next) => {
+    // after /clear the atoms come back empty and session.start does not fire: refill them at the first tool call instead of waiting for the end of the turn
+    if (!(await read($, progress))) await refresh($)
+    if (!(await read($, limits)).length) await refreshLimits($)
     await refreshOpen($)
     await refreshAgents($)
     const r = await next(e)

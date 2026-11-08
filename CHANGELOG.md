@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.3.10]
+- Panel after /clear: the progress file and usage figures are reloaded at the first tool call, instead of showing "no PROGRESS.md yet" until the end of the first turn.
+
 ## [0.3.9]
 - Session bar: Haiku now also records the work already done in the session as ticked steps (not only what is missing), so the bar shows real progress instead of staying at 0%. A done step may not copy a project step.
 
