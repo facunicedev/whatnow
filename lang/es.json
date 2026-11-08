@@ -53,5 +53,5 @@
   "here": "esta (principal)",
   "parallelWord": "paralela",
   "parallels": "Sesiones paralelas",
-  "useSkill": "Esto ahora es una skill: escribe /whatnow:traspaso (traspaso) o /whatnow:progreso (actualizar PROGRESS.md)"
+  "useSkill": "Esto ahora es una skill: escribe /whatnow:traspaso (traspaso) o /whatnow:progreso (actualizar PROGRESS.md) o /whatnow:ajustes (posición, límite, idioma)"
 }

@@ -58,6 +58,35 @@ async function loadLang($: EngineInterface, pref?: string) {
   await update($, strings, () => ({ ...base, ...(own ?? {}) }))
   return { want: String(want), code, found: !!own }
 }
+// The /whatnow:ajustes skill (a picker) writes its choices to <claude home>/whatnow-ajustes.json: { position, limit, lang }.
+// Applied here on the next tool call or turn, then the file is emptied so a later /whatnow command is not overridden.
+async function applyPrefs($: EngineInterface) {
+  const file = `${flat($.plugin.root).split('/plugins/')[0]}/whatnow-ajustes.json`
+  const raw = await $.fs.read(file).catch(() => '')
+  if (typeof raw !== 'string' || !raw.trim() || raw.trim() === '{}') return
+  let p: { position?: string; limit?: number; lang?: string } = {}
+  try { p = JSON.parse(raw) } catch { return } // half-written: try again next time
+  await $.fs.write(file, '{}')
+  if (p.position === 'lateral' || p.position === 'band') {
+    await update($, sitio, () => p.position as Sitio)
+    await update($, hidden, () => false)
+    await $.store.set('sitio', p.position)
+    if (p.position === 'lateral') await openPane($, await read($, strings))
+    else await $.ui.close({ id: P })
+  }
+  if (typeof p.limit === 'number' && p.limit >= 20_000 && p.limit <= 1_000_000) {
+    await update($, limit, () => p.limit as number)
+    await $.store.set('limit', p.limit)
+    warned = false
+  }
+  if (p.lang && /^[a-z]{2,3}(-[A-Za-z]+)?$|^auto$/.test(p.lang)) {
+    const { code } = await loadLang($, p.lang)
+    await $.store.set('lang', p.lang)
+    await registerCommand($)
+    const s2 = await read($, strings)
+    void translateProgress($, code, s2).catch(err => $.ui.toast(t(s2, 'translateFail') + ' ' + String(err)))
+  }
+}
 async function registerCommand($: EngineInterface) {
   const s = await read($, strings)
   await $.command.register({ name: P, description: t(s, 'cmdDescription'), argumentHint: t(s, 'cmdHint') })
@@ -372,6 +401,7 @@ export const register: Register = on => {
       await update($, sitio, () => 'lateral')
       void openPane($, await read($, strings))
     }
+    await applyPrefs($)
     await refresh($)
     await refreshLimits($)
     return next(e)
@@ -440,6 +470,7 @@ export const register: Register = on => {
     const L = await read($, limit)
     await update($, tokens, () => used)
     await update($, limits, () => e.rateLimits ?? [])
+    await applyPrefs($)
     await refresh($)
     await refreshAgents($)
     if (used < L) warned = false
@@ -466,6 +497,7 @@ export const register: Register = on => {
     await refreshAgents($)
     const r = await next(e)
     await refreshAgents($)
+    await applyPrefs($)
     return r
   })
   on('turn.complete', async ($, e, next) => {

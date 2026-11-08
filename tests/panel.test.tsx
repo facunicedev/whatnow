@@ -439,3 +439,19 @@ test('una sesión -w lee y escribe el PROGRESS.md de la carpeta principal, no el
   expect(prog.length).toBeGreaterThan(0)
   expect(prog.every(p => p.split(String.fromCharCode(92)).join('/') === 'C:/proj/PROGRESS.md')).toBe(true)
 })
+
+test('la skill ajustes deja whatnow-ajustes.json: el mod aplica límite e idioma y vacía el archivo', async ($, on) => {
+  const stored: Record<string, unknown> = {}
+  let ajustes = '{"limit":90000,"lang":"es"}'
+  on('command.register', () => ({ value: { command: 'whatnow' } }))
+  on('fs.read', (_, e: any) => (/whatnow-ajustes/.test(e.path) ? { value: ajustes } : readFile(_, e)) as never)
+  on('fs.write', (_, e: any) => (/whatnow-ajustes/.test(e.path) && (ajustes = e.content ?? e.text ?? e.data), { value: undefined }) as never)
+  on('fs.list', () => ({ value: [{ name: 'en.json' }, { name: 'es.json' }] }) as never)
+  on('store.get', (_, e: any) => ({ value: stored[e.key] }) as never)
+  on('store.set', (_, e: any) => ((stored[e.key] = e.value), { value: undefined }) as never)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(stored.limit).toBe(90000)
+  expect(stored.lang).toBe('es')
+  expect(ajustes).toBe('{}')
+})

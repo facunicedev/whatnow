@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.4.1]
+- New skill `/whatnow:ajustes`: a picker for panel position, handoff limit and language (any language by typing it). It leaves its choices in `whatnow-ajustes.json` (in the Claude home folder); the plugin applies them on the next tool call or turn and empties the file. The `/whatnow side|band|limit|<lang>` commands keep working.
+
 ## [0.4.0]
 - Handoff and progress are skills now (`/whatnow:traspaso`, `/whatnow:progreso`): the engine refuses `prompt.submit` inside a command hook, so `/whatnow traspaso` failed. The command only points to the skills. The plugin writes the open sessions to `.claude/whatnow-live.txt` for the handoff skill. The automatic handoff at the context limit is unchanged.
 

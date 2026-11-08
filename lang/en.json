@@ -53,5 +53,5 @@
   "here": "this one (main)",
   "parallelWord": "parallel",
   "parallels": "Parallel sessions",
-  "useSkill": "This is a skill now: type /whatnow:traspaso (handoff) or /whatnow:progreso (update PROGRESS.md)"
+  "useSkill": "This is a skill now: type /whatnow:traspaso (handoff) or /whatnow:progreso (update PROGRESS.md) or /whatnow:ajustes (position, limit, language)"
 }
