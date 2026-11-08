@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+- Handoff and progress are skills now (`/whatnow:traspaso`, `/whatnow:progreso`): the engine refuses `prompt.submit` inside a command hook, so `/whatnow traspaso` failed. The command only points to the skills. The plugin writes the open sessions to `.claude/whatnow-live.txt` for the handoff skill. The automatic handoff at the context limit is unchanged.
+
 ## [0.3.10]
 - Panel after /clear: the progress file and usage figures are reloaded at the first tool call, instead of showing "no PROGRESS.md yet" until the end of the first turn.
 

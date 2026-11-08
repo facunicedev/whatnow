@@ -52,5 +52,6 @@
   "idle": "waiting",
   "here": "this one (main)",
   "parallelWord": "parallel",
-  "parallels": "Parallel sessions"
+  "parallels": "Parallel sessions",
+  "useSkill": "This is a skill now: type /whatnow:traspaso (handoff) or /whatnow:progreso (update PROGRESS.md)"
 }

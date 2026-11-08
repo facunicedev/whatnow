@@ -324,6 +324,7 @@ async function nameSession($: EngineInterface, home: string, p: { id: string; cw
 }
 
 // Perspective: this session sees itself as the main one and every other open session as parallel (a -w session sees the main one as parallel).
+let lastLive = ''
 async function refreshOpen($: EngineInterface) {
   if (!root) return
   const { home, list } = await openSessions($)
@@ -346,6 +347,8 @@ async function refreshOpen($: EngineInterface) {
     pars.push({ name: named.get(p.id)?.label || p.name, md: text, mark: pm, status: p.status, doing: named.get(p.id)?.doing })
   }
   live = marks.every(Boolean) ? marks : []
+  const liveTxt = live.join(',') // the handoff skill reads the open sessions from here
+  if (liveTxt !== lastLive) { lastLive = liveTxt; await $.fs.write(at('.claude/whatnow-live.txt'), liveTxt).catch(() => {}) }
   const open: Abierta[] = list.map(p => ({ name: named.get(p.id)?.label || p.name, status: p.status, self: !!mine && p.id === mine, doing: named.get(p.id)?.doing })).sort((a, b) => Number(b.self) - Number(a.self) || a.name.localeCompare(b.name))
   if (JSON.stringify(open) !== JSON.stringify(await read($, peers))) await update($, peers, () => open)
   if (JSON.stringify(pars) !== JSON.stringify(await read($, parallels))) await update($, parallels, () => pars) // a closed session drops out of the panel by itself
@@ -408,14 +411,8 @@ export const register: Register = on => {
       warned = false
       return { text: t(s, 'limitSet', { n: n / 1000 }) }
     }
-    if (/^progres/.test(word)) {
-      void $.prompt.submit({ text: t(s, 'progressNow', { progress: at(PROGRESS), mark }), asUser: true }).catch(err => $.ui.toast(t(s, 'progressFail', { err: String(err) })))
-      return { text: t(s, 'progressAsk', { file: PROGRESS }) }
-    }
-    if (/^(traspas|handoff)/.test(word)) {
-      void $.prompt.submit({ text: handoffPrompt(s, t(s, 'whyUser')), asUser: true }).catch(err => $.ui.toast(t(s, 'handoffFail', { err: String(err) })))
-      return { text: t(s, 'handoffAsk') }
-    }
+    // prompt.submit is refused inside a command hook: progress and handoff are skills now (skills/progreso, skills/traspaso)
+    if (/^(progres|traspas|handoff)/.test(word)) return { text: t(s, 'useSkill') }
     const files = await $.fs.list(`${$.plugin.root}/lang`).catch(() => [])
     const codes = files.map(f => f.name.replace(/\.json$/, ''))
     const isLangWord = /^(lang|idiom)/.test(word)
