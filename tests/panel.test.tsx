@@ -273,7 +273,7 @@ test('al acabar un turno haiku escribe solo su sección "## Haiku [marca]"; el p
   expect(written[0]).not.toContain('- [x] probar el traspaso') // una tarea del proyecto no es de Haiku
   expect(written[0]).not.toContain('Estado: ignorado')
   expect(written[0]).toContain('- [ ] cosa nueva')
-  expect(written[0]).not.toContain('tarea inventada')
+  expect(written[0]).toContain("tarea inventada") // a new done step is now kept: it is how the session bar shows progress
   expect(written[0].startsWith(MD.slice(0, 200))).toBe(true) // el resto del archivo queda intacto
 
   // misma respuesta otra vez: no se reescribe

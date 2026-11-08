@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.3.9]
+- Session bar: Haiku now also records the work already done in the session as ticked steps (not only what is missing), so the bar shows real progress instead of staying at 0%. A done step may not copy a project step.
+
 ## [0.3.8]
 - Haiku ticks steps when the work is reported done (even if untested), writes small single-action steps, and no longer leaves the session bar stuck at 0%.
 

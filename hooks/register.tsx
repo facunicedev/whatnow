@@ -109,12 +109,13 @@ async function syncProgress($: EngineInterface, answer: string) {
     const secs = [...md.matchAll(sectionRe(heads))]
     const sec = secs.find(m => m[0].split('\n')[0].includes(`[${mark}]`)) ?? secs.find(m => !/\[whatnow-/.test(m[0].split('\n')[0]))
     const steps = new Set(sec ? tasks(sec[1]) : []) // the steps of this session's own list
+    const all = new Set(tasks(md)) // a new done step may not copy a project step
     const before = new Set(mine ? tasks(mine[1]) : []) // steps haiku itself proposed earlier
     const r = await $.model.complete({
       model: 'haiku', effort: 'low', maxTokens: 1500, timeoutMs: 60_000,
       prompt: `Below is a PROGRESS.md, your previous notes (may be empty) and the assistant's recent messages of the work session (oldest first, the last one is the newest). Write your notes for the file, true now. Reply with ONLY these lines, no headings, no comments, no code fence:
 1. "${task} " plus one sentence with what this session is doing now.
-2. One line "- [x] <text>" for each step of this session's list (the section "## ${s.sessionHeading ?? 'This session'} [${mark}]") that the messages show is done, or that a later message replaced or cancelled. Copy the step text EXACTLY. Keep the ones of your previous notes that are still true.
+2. One line "- [x] <text>" for each step of this session's list (the section "## ${s.sessionHeading ?? 'This session'} [${mark}]") that the messages show is done, or that a later message replaced or cancelled. Copy the step text EXACTLY. Keep the ones of your previous notes that are still true. Also write a "- [x] <short text>" line for each real piece of work of this session the messages show as done that has no step in the list (so the session bar shows the progress made, not only what is missing).
 3. One line "- [ ] <text>" for a new step of this session only if something is still missing that no existing step covers: read the existing steps first and never repeat one in other words. Write new steps small and single-action (one thing each, never "A and B"), so each can be ticked on its own.
 Ignore the project list: it is not yours.
 Tick when the messages say the work was done, fixed or changed (a code change reported as done counts), even if it was not tested yet; if a step is only partly done, leave it unticked. A step of your previous notes that mixes several things and is partly done: tick nothing for it, but you may add the remaining part as a new small step. Write in the language of the file.
@@ -133,7 +134,7 @@ ${recent.map((m, i) => `[${i + 1}] ${m}`).join('\n\n')}`,
     const seen = new Set<string>()
     const lines = out.split('\n').map(l => l.trim()).filter(l => {
       const m = l.match(/^- \[([ xX])\] (.+)$/)
-      if (m) return !seen.has(m[2].trim()) && !!seen.add(m[2].trim()) && (m[1] === ' ' ? !steps.has(m[2].trim()) : steps.has(m[2].trim()) || before.has(m[2].trim()))
+      if (m) return !seen.has(m[2].trim()) && !!seen.add(m[2].trim()) && (m[1] === ' ' ? !steps.has(m[2].trim()) : steps.has(m[2].trim()) || before.has(m[2].trim()) || !all.has(m[2].trim()))
       return startsWith(l, [...TASK_LABELS, task]) && !seen.has(l.slice(0, 4).toLowerCase()) && !!seen.add(l.slice(0, 4).toLowerCase())
     }).slice(0, 60)
     if (!lines.length) return
@@ -175,7 +176,7 @@ function parse(md: string, s: Dict, key = '') {
   const rest = [...all, ...hk].reduce((x, m) => x.replace(m[0], ''), md)
   const lines = (x: string, box: string) => [...x.matchAll(new RegExp(`^\\s*- \\[${box}\\] (.+)$`, 'gm'))].map(y => y[1].trim())
   const ticks = new Set(hmine ? lines(hmine[1], '[xX]') : []) // haiku only speaks about its own session
-  const fresh = hmine ? [...new Set(lines(hmine[1], ' '))].filter(x => !ticks.has(x)) : []
+  const fresh = hmine ? [...new Set(lines(hmine[1], '[ xX]'))] : [] // haiku's own steps, done or not
   const count = (x: string, extra: string[] = [], ticked = new Set<string>()) => {
     const tasks = [...lines(x, '[ xX]'), ...extra.filter(e => !lines(x, '[ xX]').includes(e))]
     const done = (t: string) => ticked.has(t) || lines(x, '[xX]').includes(t)
